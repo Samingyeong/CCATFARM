@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { Bell, Wifi, WifiOff, Loader } from 'lucide-react'
 import { useRos } from '../hooks/useRos'
 import { useBattery } from '../hooks/useBattery'
+import { useCamera } from '../hooks/useCamera'
 import { getZoneName } from '../utils/zoneMap'
 import Joystick from '../components/Joystick'
 import RosMap from '../components/RosMap'
@@ -21,6 +22,7 @@ export default function Map() {
   const [emergency, setEmergency] = useState(false)
   const { ros, status } = useRos()
   const battery = useBattery()
+  const cameraSrc = useCamera(ros, status)
   const [pose, setPose] = useState<RobotPose | null>(null)
 
   // /amcl_pose 구독
@@ -92,14 +94,19 @@ export default function Map() {
       </header>
 
       <div className="page-content">
-        {/* Camera Feed — RTSP via Backend MJPEG */}
+        {/* Camera Feed — ROS CompressedImage */}
         <div className="camera-feed">
-          <img
-            src="http://localhost:8000/api/camera/1"
-            alt="Robot Camera"
-            className="camera-stream"
-            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-          />
+          {cameraSrc ? (
+            <img
+              src={cameraSrc}
+              alt="Robot Camera"
+              className="camera-stream"
+            />
+          ) : (
+            <div className="camera-placeholder">
+              {status === 'connected' ? '카메라 영상 수신 대기 중...' : 'ROS 연결 대기 중...'}
+            </div>
+          )}
           <div className="camera-overlay">
             <span className="camera-tag red">{pose ? `● X:${pose.x.toFixed(1)} Y:${pose.y.toFixed(1)}` : '● 위치 대기'}</span>
             <div className="camera-stats">

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Bell, ChevronRight, Wifi, WifiOff, BatteryCharging, Battery } from 'lucide-react'
+import { Bell, ChevronRight, BatteryCharging, Battery } from 'lucide-react'
 import { useRos } from '../hooks/useRos'
 import { useBattery } from '../hooks/useBattery'
 import { useDiagnostics } from '../hooks/useDiagnostics'
