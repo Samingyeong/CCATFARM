@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { useRos } from './useRos'
+import type { UseRosReturn } from './useRos'
+import { TOPICS } from '../config/rosTopics'
 
 declare const ROSLIB: typeof import('roslib')
 
@@ -13,8 +14,11 @@ export interface DiagnosticItem {
 /**
  * /diagnostics 구독 → 에러/경고만 필터링해서 반환
  */
-export function useDiagnostics(maxItems = 10): DiagnosticItem[] {
-  const { ros, status } = useRos()
+export function useDiagnostics(
+  ros: UseRosReturn['ros'],
+  status: UseRosReturn['status'],
+  maxItems = 10,
+): DiagnosticItem[] {
   const [items, setItems] = useState<DiagnosticItem[]>([])
 
   useEffect(() => {
@@ -22,9 +26,11 @@ export function useDiagnostics(maxItems = 10): DiagnosticItem[] {
 
     const topic = new ROSLIB.Topic({
       ros,
-      name: '/diagnostics',
-      messageType: 'diagnostic_msgs/msg/DiagnosticArray',
-    })
+      name: TOPICS.DIAGNOSTICS.name,
+      messageType: TOPICS.DIAGNOSTICS.messageType,
+      queue_length: 1,
+      throttle_rate: 1000,
+    } as any)
 
     topic.subscribe((msg: any) => {
       const now = Date.now()

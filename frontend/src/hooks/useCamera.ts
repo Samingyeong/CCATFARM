@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { useRos } from './useRos'
+import type { UseRosReturn } from './useRos'
+import { TOPICS } from '../config/rosTopics'
 
 declare const ROSLIB: typeof import('roslib')
 
@@ -7,8 +8,10 @@ declare const ROSLIB: typeof import('roslib')
  * /camera/camera/color/image_raw/compressed 구독
  * base64 인코딩된 JPEG 이미지를 반환
  */
-export function useCamera(): string | null {
-  const { ros, status } = useRos()
+export function useCamera(
+  ros: UseRosReturn['ros'],
+  status: UseRosReturn['status'],
+): string | null {
   const [imageSrc, setImageSrc] = useState<string | null>(null)
 
   useEffect(() => {
@@ -16,8 +19,8 @@ export function useCamera(): string | null {
 
     const topic = new ROSLIB.Topic({
       ros,
-      name: '/camera/camera/color/image_raw/compressed',
-      messageType: 'sensor_msgs/msg/CompressedImage',
+      name: TOPICS.CAMERA_COLOR_COMPRESSED.name,
+      messageType: TOPICS.CAMERA_COLOR_COMPRESSED.messageType,
     })
 
     topic.subscribe((msg: any) => {

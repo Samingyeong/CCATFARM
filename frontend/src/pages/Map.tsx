@@ -2,7 +2,10 @@ import { useState, useEffect, useCallback } from 'react'
 import { Bell, Wifi, WifiOff, Loader } from 'lucide-react'
 import { useRos } from '../hooks/useRos'
 import { useBattery } from '../hooks/useBattery'
+import { useRobotCommand } from '../hooks/useRobotCommand'
+import { TOPICS } from '../config/rosTopics'
 import { getZoneName } from '../utils/zoneMap'
+import CameraStream from '../components/CameraStream'
 import Joystick from '../components/Joystick'
 import RosMap from '../components/RosMap'
 
@@ -20,7 +23,8 @@ export default function Map() {
   const [mode, setMode] = useState<'AUTO' | 'MANUAL'>('AUTO')
   const [emergency, setEmergency] = useState(false)
   const { ros, status } = useRos()
-  const battery = useBattery()
+  const battery = useBattery(ros, status)
+  const publishRobotCommand = useRobotCommand(ros, status)
   const [pose, setPose] = useState<RobotPose | null>(null)
 
   // /amcl_pose 구독
@@ -28,8 +32,8 @@ export default function Map() {
     if (!ros || status !== 'connected') return
     const poseTopic = new ROSLIB.Topic({
       ros,
-      name: '/amcl_pose',
-      messageType: 'geometry_msgs/msg/PoseWithCovarianceStamped',
+      name: TOPICS.AMCL_POSE.name,
+      messageType: TOPICS.AMCL_POSE.messageType,
     })
     poseTopic.subscribe((message: any) => {
       const pos = message.pose?.pose?.position
@@ -42,8 +46,12 @@ export default function Map() {
   const handleEmergency = () => {
     const next = !emergency
     setEmergency(next)
-    if (next) setMode('MANUAL')
-    else setMode('AUTO')
+    if (next) {
+      publishRobotCommand('ESTOP')
+      setMode('MANUAL')
+    } else {
+      setMode('AUTO')
+    }
   }
 
   // cmd_vel 퍼블리시 (ROS 연결 시)
@@ -51,8 +59,8 @@ export default function Map() {
     if (!ros || status !== 'connected') return
     const cmdVel = new ROSLIB.Topic({
       ros,
-      name: '/cmd_vel',
-      messageType: 'geometry_msgs/msg/Twist',
+      name: TOPICS.CMD_VEL.name,
+      messageType: TOPICS.CMD_VEL.messageType,
     })
     cmdVel.publish({
       linear: { x: linear, y: 0, z: 0 },
@@ -92,14 +100,9 @@ export default function Map() {
       </header>
 
       <div className="page-content">
-        {/* Camera Feed — RTSP via Backend MJPEG */}
+        {/* Camera Feed — ROS CompressedImage */}
         <div className="camera-feed">
-          <img
-            src="http://localhost:8000/api/camera/1"
-            alt="Robot Camera"
-            className="camera-stream"
-            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-          />
+          <CameraStream ros={ros} status={status} />
           <div className="camera-overlay">
             <span className="camera-tag red">{pose ? `● X:${pose.x.toFixed(1)} Y:${pose.y.toFixed(1)}` : '● 위치 대기'}</span>
             <div className="camera-stats">
@@ -110,7 +113,7 @@ export default function Map() {
         </div>
 
         {/* ROS 실시간 맵 */}
-        <RosMap robotPose={pose} />
+        <RosMap ros={ros} status={status} robotPose={pose} />
 
         {/* ROS 위치 정보 */}
         <div className="card">
@@ -189,11 +192,24 @@ export default function Map() {
 
         {/* Action Buttons */}
         <div className="robot-actions">
-          <button className="action-btn start">START</button>
-          <button className="action-btn home">HOME</button>
+          <button
+            className="action-btn start"
+            onClick={() => publishRobotCommand('START')}
+            disabled={status !== 'connected'}
+          >
+            START
+          </button>
+          <button
+            className="action-btn home"
+            onClick={() => publishRobotCommand('HOME')}
+            disabled={status !== 'connected'}
+          >
+            HOME
+          </button>
           <button
             className={`action-btn emergency ${emergency ? 'emergency-active' : ''}`}
             onClick={handleEmergency}
+            disabled={status !== 'connected'}
           >
             {emergency ? 'CANCEL' : 'EMERGENCY'}
           </button>

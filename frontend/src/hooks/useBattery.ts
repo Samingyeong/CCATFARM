@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
-import { useRos } from './useRos'
+import type { UseRosReturn } from './useRos'
+import { TOPICS } from '../config/rosTopics'
 
 declare const ROSLIB: typeof import('roslib')
 
@@ -10,8 +11,10 @@ export interface BatteryData {
   isCharging: boolean
 }
 
-export function useBattery(): BatteryData | null {
-  const { ros, status } = useRos()
+export function useBattery(
+  ros: UseRosReturn['ros'],
+  status: UseRosReturn['status'],
+): BatteryData | null {
   const [battery, setBattery] = useState<BatteryData | null>(null)
 
   useEffect(() => {
@@ -19,9 +22,11 @@ export function useBattery(): BatteryData | null {
 
     const topic = new ROSLIB.Topic({
       ros,
-      name: '/battery_state',
-      messageType: 'sensor_msgs/msg/BatteryState',
-    })
+      name: TOPICS.BATTERY_STATE.name,
+      messageType: TOPICS.BATTERY_STATE.messageType,
+      queue_length: 1,
+      throttle_rate: 1000,
+    } as any)
 
     topic.subscribe((msg: any) => {
       setBattery({

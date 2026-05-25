@@ -17,12 +17,44 @@ export const TOPICS = {
     description: '로봇 선속도/각속도 명령',
   },
 
+  // 로봇 상위 명령 (퍼블리시) — START/HOME/ESTOP
+  ROBOT_COMMAND: {
+    name: '/robot_command',
+    messageType: 'std_msgs/msg/String',
+    direction: 'publish' as const,
+    description: '로봇 상위 제어 명령',
+  },
+
   // 오도메트리 (구독) — 로봇 이동 거리, 속도
   ODOM: {
     name: '/odom',
     messageType: 'nav_msgs/msg/Odometry',
     direction: 'subscribe' as const,
     description: '휠 엔코더 기반 위치/속도 추정',
+  },
+
+  // 지도 (구독) — SLAM/Navigation 맵 표시
+  MAP: {
+    name: '/map',
+    messageType: 'nav_msgs/msg/OccupancyGrid',
+    direction: 'subscribe' as const,
+    description: '2D 점유 격자 지도',
+  },
+
+  // AMCL 위치 추정 (구독) — 현재 로봇 위치 표시
+  AMCL_POSE: {
+    name: '/amcl_pose',
+    messageType: 'geometry_msgs/msg/PoseWithCovarianceStamped',
+    direction: 'subscribe' as const,
+    description: 'AMCL 기반 로봇 위치 추정',
+  },
+
+  // 2D Pose Estimate (퍼블리시) — 초기 위치 지정
+  INITIAL_POSE: {
+    name: '/initialpose',
+    messageType: 'geometry_msgs/msg/PoseWithCovarianceStamped',
+    direction: 'publish' as const,
+    description: '지도 위에서 지정한 초기 위치와 방향',
   },
 
   // TF 변환 (구독) — 좌표계 변환 정보

@@ -127,5 +127,66 @@ ros2 launch nav2_bringup bringup_launch.py map:=/path/to/map.yaml
 |------|------|
 | 최현석 | Nav Lead — ROS2 환경 구축, Nav2, SLAM |
 | 태성우 | HW Architect — 프레임 제작, 액추에이터 |
-| 이시우 | Vision/Docking — ArUco 인식, 정밀 정렬 |
+| 이시우 | Vision/Docking — AprilTag 인식, 정밀 정렬 |
 | 사민경 | AI/App Dev — YOLOv11, 모바일 앱 UI/UX |
+
+## 0522 Update
+
+### 카메라 스트리밍 구조 변경
+
+- 기존 백엔드 MJPEG 스트리밍(`http://localhost:8000/api/camera/1`) 대신 ROS 2 토픽을 직접 구독하도록 변경함
+- rosbridge를 통해 `/camera/camera/color/image_raw/compressed`를 수신
+- 메시지 타입은 `sensor_msgs/msg/CompressedImage`이며, `data` 필드를 `data:image/jpeg;base64,...` 형태로 `<img>`에 표시함
+- 실제 카메라 렌더링은 `frontend/src/components/CameraStream.tsx`에서 처리합니다.
+- 카메라 프레임마다 React 화면 전체가 다시 렌더링되지 않도록 `<img>`의 `src`를 직접 갱신하는 방식으로 변경
+- 카메라 구독에는 `queue_length: 1`, 기본 `throttle_rate: 66ms`를 적용해 오래된 프레임이 쌓이지 않도록 변경함
+
+### ROS 토픽 정리
+- 현재 Map 화면에서 실제로 구독하는 주요 토픽:
+  - `/camera/camera/color/image_raw/compressed`
+  - `/map`
+  - `/amcl_pose`
+  - `/battery_state`
+- 현재 Map 화면에서 publish하는 주요 토픽:
+  - `/cmd_vel`
+  - `/initialpose`
+- `rosTopics.ts`에 정의된 모든 토픽을 수신하는 것은 아니며, 화면에서 `ROSLIB.Topic(...).subscribe()`를 호출한 토픽만 rosbridge를 통해 수신함
+
+### 지도 및 2D Pose Estimate
+
+- `frontend/src/components/RosMap.tsx`에서 `/map` (`nav_msgs/msg/OccupancyGrid`)을 받아 지도 캔버스를 표시
+- Map 화면에 `2D Pose` 버튼을 추가
+- 앱에서 지도 위 위치를 누르고 진행 방향으로 드래그한 뒤 체크 버튼을 누르면 `/initialpose`로 `geometry_msgs/msg/PoseWithCovarianceStamped`를 publish하도록 기능 추가
+- `/amcl_pose`가 지정한 좌표 근처로 갱신되면 앱에서 위치 추정 반영 여부를 표시
+- `/map` 구독에는 `queue_length: 1`, 기본 `throttle_rate: 1000ms`를 적용해 카메라 스트리밍과 지도 수신이 서로 과하게 밀리지 않도록 변경함
+
+### ROS 연결 최적화
+
+- `useBattery`, `useDiagnostics`, `RosMap`, `CameraStream`이 각각 별도 rosbridge 연결을 만들지 않고, 화면에서 생성한 `useRos()` 연결을 공유하도록 수정함
+- 네비게이션 노드 실행 시 카메라 스트리밍이 끊기거나 느려지는 문제를 줄이기 위해 카메라와 지도 토픽 모두 queue/throttle 설정 적용
+
+### 관련 환경 변수
+
+| 변수 | 기본값 | 설명 |
+|------|--------|------|
+| `VITE_ROS_URL` | `ws://192.168.0.141:9090` | rosbridge WebSocket 주소 |
+| `VITE_CAMERA_THROTTLE_MS` | `66` | 카메라 CompressedImage 수신 간격(ms), 약 15fps |
+| `VITE_MAP_THROTTLE_MS` | `1000` | `/map` 수신 간격(ms) |
+
+### 확인용 ROS 명령
+
+```bash
+# 카메라 토픽 수신율/대역폭 확인
+ros2 topic hz /camera/camera/color/image_raw/compressed
+ros2 topic bw /camera/camera/color/image_raw/compressed
+
+# 지도와 위치 추정 확인
+ros2 topic hz /map
+ros2 topic hz /amcl_pose
+
+# 앱에서 보낸 2D Pose 확인
+ros2 topic echo /initialpose --once
+
+# rosbridge가 실제로 구독 중인 토픽 확인
+ros2 node info /rosbridge_websocket
+```

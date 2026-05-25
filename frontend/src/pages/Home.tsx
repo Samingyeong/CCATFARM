@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Bell, ChevronRight, Wifi, WifiOff, BatteryCharging, Battery } from 'lucide-react'
+import { Bell, ChevronRight, BatteryCharging, Battery } from 'lucide-react'
 import { useRos } from '../hooks/useRos'
 import { useBattery } from '../hooks/useBattery'
 import { useDiagnostics } from '../hooks/useDiagnostics'
+import { useRobotCommand } from '../hooks/useRobotCommand'
 import { getZoneName, ZONES } from '../utils/zoneMap'
 
 declare const ROSLIB: typeof import('roslib')
@@ -16,8 +17,9 @@ interface RobotState {
 
 export default function Home() {
   const { ros, status } = useRos()
-  const battery = useBattery()
-  const diagnostics = useDiagnostics(5)
+  const battery = useBattery(ros, status)
+  const diagnostics = useDiagnostics(ros, status, 5)
+  const publishRobotCommand = useRobotCommand(ros, status)
   const [robot, setRobot] = useState<RobotState>({
     zone: '---',
     x: 0,
@@ -89,9 +91,27 @@ export default function Home() {
             />
           </div>
           <div className="robot-actions">
-            <button className="action-btn start">START</button>
-            <button className="action-btn home">HOME</button>
-            <button className="action-btn emergency">EMERGENCY</button>
+            <button
+              className="action-btn start"
+              onClick={() => publishRobotCommand('START')}
+              disabled={!connected}
+            >
+              START
+            </button>
+            <button
+              className="action-btn home"
+              onClick={() => publishRobotCommand('HOME')}
+              disabled={!connected}
+            >
+              HOME
+            </button>
+            <button
+              className="action-btn emergency"
+              onClick={() => publishRobotCommand('ESTOP')}
+              disabled={!connected}
+            >
+              EMERGENCY
+            </button>
           </div>
         </div>
 
