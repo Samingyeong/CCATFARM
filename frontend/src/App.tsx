@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { BrowserRouter, Routes, Route, NavLink } from 'react-router-dom'
 import { Home as HomeIcon, Map as MapIcon, Leaf, Settings as SettingsIcon } from 'lucide-react'
 import { isLoggedIn, clearAuth } from './utils/auth'
+import { useTheme } from './hooks/useTheme'
 import Login from './pages/Login'
 import Home from './pages/Home'
 import Map from './pages/Map'
@@ -18,6 +19,7 @@ const navItems = [
 
 export default function App() {
   const [loggedIn, setLoggedIn] = useState(() => isLoggedIn())
+  useTheme() // 시간대 기반 자동 테마 전환
 
   if (!loggedIn) {
     return <Login onLogin={() => setLoggedIn(true)} />

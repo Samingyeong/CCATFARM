@@ -216,21 +216,21 @@ export default function RosMap({ ros, status, robotPose, patrolRoute, onZoneChan
       ctx.strokeRect(topLeft.x, topLeft.y, w, h)
       ctx.restore()
 
-      // Zone 라벨 (배경 포함, 잘 보이게)
+      // Zone 라벨 (배경 포함 — 크고 진하게)
       const cx = topLeft.x + w / 2
       const cy = topLeft.y + h / 2
       const label = zone.name
-      ctx.font = 'bold 11px -apple-system, sans-serif'
+      ctx.font = 'bold 13px -apple-system, sans-serif'
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
       const tw = ctx.measureText(label).width
-      // 라벨 배경
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.85)'
-      ctx.beginPath()
-      ctx.roundRect(cx - tw / 2 - 6, cy - 8, tw + 12, 16, 4)
-      ctx.fill()
-      // 라벨 텍스트
+      // 라벨 배경 pill
       ctx.fillStyle = zone.color
+      ctx.beginPath()
+      ctx.roundRect(cx - tw / 2 - 8, cy - 10, tw + 16, 20, 10)
+      ctx.fill()
+      // 라벨 텍스트 (흰색)
+      ctx.fillStyle = '#ffffff'
       ctx.fillText(label, cx, cy)
     }
   }, [activeZones, worldToCanvas])
@@ -238,14 +238,12 @@ export default function RosMap({ ros, status, robotPose, patrolRoute, onZoneChan
   const drawPatrolRoute = useCallback((ctx: CanvasRenderingContext2D, meta: MapMeta, currentPose: { x: number; y: number } | null) => {
     if (!patrolRoute || patrolRoute.length === 0) return
 
-    // 각 Zone의 중심 좌표 계산
     const getZoneCenter = (zoneName: string): { x: number; y: number } | null => {
       const zone = activeZones.find((z) => z.name === zoneName)
       if (!zone) return null
       return { x: (zone.xMin + zone.xMax) / 2, y: (zone.yMin + zone.yMax) / 2 }
     }
 
-    // 경로 포인트 수집 (현재 위치 → 각 Zone 중심)
     const points: { x: number; y: number }[] = []
     if (currentPose) {
       points.push(worldToCanvas(currentPose, meta))
@@ -257,11 +255,11 @@ export default function RosMap({ ros, status, robotPose, patrolRoute, onZoneChan
 
     if (points.length < 2) return
 
-    // 점선 경로 그리기
+    // 네이버 길찾기 스타일 — 두꺼운 파란 경로 + 흰 테두리
+    // 1) 흰색 외곽선 (두꺼운 배경)
     ctx.save()
-    ctx.setLineDash([8, 5])
-    ctx.strokeStyle = '#3b82f6'
-    ctx.lineWidth = 2.5
+    ctx.strokeStyle = '#ffffff'
+    ctx.lineWidth = 6
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
     ctx.beginPath()
@@ -270,24 +268,72 @@ export default function RosMap({ ros, status, robotPose, patrolRoute, onZoneChan
       ctx.lineTo(points[i].x, points[i].y)
     }
     ctx.stroke()
+
+    // 2) 파란 메인 경로
+    ctx.strokeStyle = '#3182f6'
+    ctx.lineWidth = 3.5
+    ctx.beginPath()
+    ctx.moveTo(points[0].x, points[0].y)
+    for (let i = 1; i < points.length; i++) {
+      ctx.lineTo(points[i].x, points[i].y)
+    }
+    ctx.stroke()
     ctx.restore()
 
-    // 각 경유지에 작은 원 표시
-    for (let i = 1; i < points.length; i++) {
+    // 3) 경로 위 방향 화살표 (중간 지점마다)
+    for (let i = 0; i < points.length - 1; i++) {
+      const from = points[i]
+      const to = points[i + 1]
+      const mx = (from.x + to.x) / 2
+      const my = (from.y + to.y) / 2
+      const angle = Math.atan2(to.y - from.y, to.x - from.x)
+
+      ctx.save()
+      ctx.translate(mx, my)
+      ctx.rotate(angle)
       ctx.beginPath()
-      ctx.arc(points[i].x, points[i].y, 5, 0, Math.PI * 2)
-      ctx.fillStyle = '#3b82f6'
+      ctx.moveTo(5, 0)
+      ctx.lineTo(-3, -3.5)
+      ctx.lineTo(-3, 3.5)
+      ctx.closePath()
+      ctx.fillStyle = '#ffffff'
+      ctx.fill()
+      ctx.restore()
+    }
+
+    // 4) 출발점 마커 (초록 원)
+    ctx.beginPath()
+    ctx.arc(points[0].x, points[0].y, 7, 0, Math.PI * 2)
+    ctx.fillStyle = '#00c471'
+    ctx.fill()
+    ctx.strokeStyle = '#fff'
+    ctx.lineWidth = 2
+    ctx.stroke()
+    ctx.font = 'bold 7px -apple-system, sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillStyle = '#fff'
+    ctx.fillText('S', points[0].x, points[0].y)
+
+    // 5) 경유지 마커 (번호 포함)
+    for (let i = 1; i < points.length; i++) {
+      const isLast = i === points.length - 1
+
+      // 마커 원
+      ctx.beginPath()
+      ctx.arc(points[i].x, points[i].y, 8, 0, Math.PI * 2)
+      ctx.fillStyle = isLast ? '#f04452' : '#3182f6'
       ctx.fill()
       ctx.strokeStyle = '#fff'
-      ctx.lineWidth = 1.5
+      ctx.lineWidth = 2
       ctx.stroke()
 
-      // 순서 번호
-      ctx.font = 'bold 7px sans-serif'
+      // 번호
+      ctx.font = 'bold 8px -apple-system, sans-serif'
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
       ctx.fillStyle = '#fff'
-      ctx.fillText(String(i), points[i].x, points[i].y)
+      ctx.fillText(isLast ? 'E' : String(i), points[i].x, points[i].y)
     }
 
   }, [activeZones, patrolRoute, worldToCanvas])
@@ -297,8 +343,9 @@ export default function RosMap({ ros, status, robotPose, patrolRoute, onZoneChan
     const ctx = canvasRef.current.getContext('2d')!
     ctx.putImageData(mapDataRef.current, 0, 0)
 
-    // 맵 배경만 연하게 — 반투명 밝은 오버레이 (이 위의 Zone/로봇/경로는 선명하게 보임)
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.35)'
+    // 맵 배경만 연하게 — 테마에 따라 오버레이 색상 변경
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark'
+    ctx.fillStyle = isDark ? 'rgba(15, 17, 23, 0.4)' : 'rgba(255, 255, 255, 0.35)'
     ctx.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height)
 
     drawZoneOverlays(ctx, mapMeta)

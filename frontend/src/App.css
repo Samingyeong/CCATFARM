@@ -1,12 +1,13 @@
 /* ══════════════════════════════════════════════
-   CCATFARM Robot — Toss-style Clean UI
-   Light Theme / Modern Fintech App Style
+   CCATFARM Robot — Adaptive Day/Night UI
+   해가 떠있으면 밝게, 해가 지면 어둡게
    ══════════════════════════════════════════════ */
 
 /* ── Reset & Base ── */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-:root {
+/* ── Light Theme (기본 — 낮) ── */
+:root, [data-theme="light"] {
   --bg-primary: #f7f8fa;
   --bg-secondary: #ffffff;
   --bg-card: #ffffff;
@@ -29,6 +30,36 @@
   --shadow-sm: 0 1px 3px rgba(0,0,0,0.04);
   --shadow-md: 0 4px 12px rgba(0,0,0,0.06);
   --shadow-lg: 0 8px 24px rgba(0,0,0,0.08);
+  --map-overlay: rgba(255, 255, 255, 0.3);
+  --zone-label-bg: rgba(255, 255, 255, 0.92);
+}
+
+/* ── Dark Theme (밤) ── */
+[data-theme="dark"] {
+  --bg-primary: #0f1117;
+  --bg-secondary: #1a1d27;
+  --bg-card: #1e2230;
+  --bg-elevated: #252a3a;
+  --border: #2a2f3f;
+  --border-light: #353b4f;
+  --text-primary: #e8eaed;
+  --text-secondary: #9aa0b4;
+  --text-muted: #6b7280;
+  --accent: #5b9cf6;
+  --accent-dim: rgba(91, 156, 246, 0.12);
+  --success: #34d399;
+  --success-dim: rgba(52, 211, 153, 0.12);
+  --warning: #fbbf24;
+  --warning-dim: rgba(251, 191, 36, 0.12);
+  --danger: #f87171;
+  --danger-dim: rgba(248, 113, 113, 0.12);
+  --radius: 12px;
+  --radius-lg: 16px;
+  --shadow-sm: 0 1px 3px rgba(0,0,0,0.2);
+  --shadow-md: 0 4px 12px rgba(0,0,0,0.3);
+  --shadow-lg: 0 8px 24px rgba(0,0,0,0.4);
+  --map-overlay: rgba(15, 17, 23, 0.4);
+  --zone-label-bg: rgba(30, 34, 48, 0.92);
 }
 
 body {
@@ -37,6 +68,7 @@ body {
   color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
   line-height: 1.5;
+  transition: background-color 0.5s ease, color 0.3s ease;
 }
 
 /* ── App Shell ── */
