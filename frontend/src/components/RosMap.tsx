@@ -73,26 +73,26 @@ export default function RosMap({ ros, status, robotPose, patrolRoute, onZoneChan
     ctx.save()
     ctx.translate(px, py)
 
-    // 외부 펄스 링 (네온 글로우)
+    // 외부 펄스 링 (라임 글로우)
     ctx.beginPath()
     ctx.arc(0, 0, 16, 0, Math.PI * 2)
-    ctx.strokeStyle = 'rgba(0, 229, 255, 0.2)'
+    ctx.strokeStyle = 'rgba(0, 230, 118, 0.2)'
     ctx.lineWidth = 1
     ctx.stroke()
 
     // 중간 링
     ctx.beginPath()
     ctx.arc(0, 0, 11, 0, Math.PI * 2)
-    ctx.strokeStyle = 'rgba(0, 229, 255, 0.4)'
+    ctx.strokeStyle = 'rgba(0, 230, 118, 0.4)'
     ctx.lineWidth = 1.5
     ctx.stroke()
 
-    // 코어 원 (네온 시안)
+    // 코어 원 (라임 그린)
     ctx.beginPath()
     ctx.arc(0, 0, 6, 0, Math.PI * 2)
-    ctx.fillStyle = '#00e5ff'
-    ctx.shadowColor = '#00e5ff'
-    ctx.shadowBlur = 12
+    ctx.fillStyle = '#00e676'
+    ctx.shadowColor = '#00e676'
+    ctx.shadowBlur = 14
     ctx.fill()
     ctx.shadowBlur = 0
 
@@ -103,7 +103,7 @@ export default function RosMap({ ros, status, robotPose, patrolRoute, onZoneChan
     ctx.fill()
 
     // 십자선 (HUD 느낌)
-    ctx.strokeStyle = 'rgba(0, 229, 255, 0.6)'
+    ctx.strokeStyle = 'rgba(0, 230, 118, 0.5)'
     ctx.lineWidth = 0.8
     ctx.beginPath()
     ctx.moveTo(-18, 0); ctx.lineTo(-8, 0)
