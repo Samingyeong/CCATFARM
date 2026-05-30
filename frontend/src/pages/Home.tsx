@@ -151,16 +151,19 @@ export default function Home() {
           <div className="crop-health">
             <div className="donut-wrap">
               <svg viewBox="0 0 80 80" width="80" height="80">
-                <circle cx="40" cy="40" r="30" fill="none" stroke="#e5e7eb" strokeWidth="10" />
-                <circle cx="40" cy="40" r="30" fill="none" stroke="#22c55e" strokeWidth="10"
-                  strokeDasharray="120 69" strokeLinecap="round" transform="rotate(-90 40 40)" />
-                <circle cx="40" cy="40" r="30" fill="none" stroke="#ef4444" strokeWidth="10"
-                  strokeDasharray="30 159" strokeLinecap="round" transform="rotate(60 40 40)" />
+                <circle cx="40" cy="40" r="30" fill="none" stroke="var(--border-light, #353b4f)" strokeWidth="10" />
               </svg>
               <div className="donut-label"><span className="donut-num">--</span><br />CROPS</div>
             </div>
             <div className="zone-list">
-              {ZONES.map((z, i) => (
+              {(ZONES.length > 0 ? ZONES : [
+                { name: 'Zone A', color: '#22c55e' },
+                { name: 'Zone B', color: '#3b82f6' },
+                { name: 'Zone C', color: '#f59e0b' },
+                { name: 'Zone D', color: '#8b5cf6' },
+                { name: 'Zone E', color: '#ef4444' },
+                { name: 'Zone F', color: '#06b6d4' },
+              ]).map((z, i) => (
                 <div key={i} className="zone-row">
                   <span className="zone-dot" style={{ background: z.color }} />
                   <span className="zone-name" style={{

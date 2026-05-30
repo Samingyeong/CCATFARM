@@ -1,10 +1,14 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 import cv2
 import os
 import threading
 import time
+
+from database import create_user, verify_user, init_db
+from auth import create_token, verify_token
 
 app = FastAPI()
 
@@ -15,6 +19,50 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# DB 초기화
+init_db()
+
+
+# ── Auth Models ──
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class RegisterRequest(BaseModel):
+    username: str
+    password: str
+    name: str = ""
+
+
+# ── Auth Endpoints ──
+@app.post("/api/auth/login")
+def login(req: LoginRequest):
+    user = verify_user(req.username, req.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="아이디 또는 비밀번호가 올바르지 않습니다.")
+    token = create_token(user["id"], user["username"])
+    return {"token": token, "user": user}
+
+
+@app.post("/api/auth/register")
+def register(req: RegisterRequest):
+    user = create_user(req.username, req.password, req.name)
+    if not user:
+        raise HTTPException(status_code=409, detail="이미 존재하는 아이디입니다.")
+    token = create_token(user["id"], user["username"])
+    return {"token": token, "user": user}
+
+
+@app.get("/api/auth/me")
+def get_me(authorization: str = ""):
+    """토큰 검증 → 사용자 정보 반환"""
+    token = authorization.replace("Bearer ", "") if authorization else ""
+    payload = verify_token(token)
+    if not payload:
+        raise HTTPException(status_code=401, detail="인증이 필요합니다.")
+    return {"user_id": payload["user_id"], "username": payload["username"]}
 
 # RTSP 설정
 os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'rtsp_transport;udp'

@@ -1,17 +1,15 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Bell, Wifi, WifiOff, Loader } from 'lucide-react'
 import { useRos } from '../hooks/useRos'
 import { useBattery } from '../hooks/useBattery'
 import { useRobotCommand } from '../hooks/useRobotCommand'
 import { TOPICS } from '../config/rosTopics'
-import { getZoneName } from '../utils/zoneMap'
+import { recordZoneEntry, startNewSession, getCurrentSessionRoute } from '../utils/patrolStorage'
 import CameraStream from '../components/CameraStream'
 import Joystick from '../components/Joystick'
 import RosMap from '../components/RosMap'
 
 declare const ROSLIB: typeof import('roslib')
-
-const zones = ['ZONE A', 'ZONE B', 'ZONE C', 'ZONE D', 'ZONE E']
 
 interface RobotPose {
   x: number
@@ -26,6 +24,26 @@ export default function Map() {
   const battery = useBattery(ros, status)
   const publishRobotCommand = useRobotCommand(ros, status)
   const [pose, setPose] = useState<RobotPose | null>(null)
+  const [visitedRoute, setVisitedRoute] = useState<string[]>(() => getCurrentSessionRoute())
+  const sessionStartedRef = useRef(false)
+
+  // 연결 시 새 세션 시작
+  useEffect(() => {
+    if (status === 'connected' && !sessionStartedRef.current) {
+      startNewSession()
+      setVisitedRoute([])
+      sessionStartedRef.current = true
+    }
+    if (status === 'disconnected' || status === 'error') {
+      sessionStartedRef.current = false
+    }
+  }, [status])
+
+  // RosMap에서 Zone 변경 콜백
+  const handleZoneChange = useCallback((zoneName: string) => {
+    recordZoneEntry(zoneName)
+    setVisitedRoute(getCurrentSessionRoute())
+  }, [])
 
   // /amcl_pose 구독
   useEffect(() => {
@@ -112,8 +130,14 @@ export default function Map() {
           </div>
         </div>
 
-        {/* ROS 실시간 맵 */}
-        <RosMap ros={ros} status={status} robotPose={pose} />
+        {/* ROS 실시간 맵 + Zone 오버레이 + 경로 표시 */}
+        <RosMap
+          ros={ros}
+          status={status}
+          robotPose={pose}
+          patrolRoute={visitedRoute}
+          onZoneChange={handleZoneChange}
+        />
 
         {/* ROS 위치 정보 */}
         <div className="card">
@@ -135,25 +159,6 @@ export default function Map() {
               {status === 'error' && '연결 오류 — rosbridge_server를 확인하세요.'}
             </div>
           )}
-        </div>
-
-        {/* Zone Map */}
-        <div className="card zone-map-card">
-          <div className="zone-grid">
-            {zones.slice(0, 3).map((z) => (
-              <div key={z} className={`zone-box ${pose && getZoneName(pose.x, pose.y).toUpperCase() === z ? 'active' : ''}`}>{z}</div>
-            ))}
-          </div>
-          <div className="zone-grid zone-grid-bottom">
-            {zones.slice(3).map((z) => (
-              <div key={z} className="zone-box">{z}</div>
-            ))}
-            <div className="zone-box station">STATION</div>
-          </div>
-          <svg className="zone-path" viewBox="0 0 300 80" preserveAspectRatio="none">
-            <path d="M 50 20 Q 150 20 150 60 Q 150 60 250 60"
-              stroke="#3b82f6" strokeWidth="2" fill="none" strokeDasharray="6 3" />
-          </svg>
         </div>
 
         {/* Mode & Progress */}
