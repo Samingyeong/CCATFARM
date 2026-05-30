@@ -73,49 +73,74 @@ export default function RosMap({ ros, status, robotPose, patrolRoute, onZoneChan
     ctx.save()
     ctx.translate(px, py)
 
-    // 그림자/글로우
+    // 바닥 그림자 (3D 느낌)
     ctx.beginPath()
-    ctx.arc(0, 0, 14, 0, Math.PI * 2)
-    ctx.fillStyle = 'rgba(59, 130, 246, 0.15)'
+    ctx.ellipse(0, 6, 10, 4, 0, 0, Math.PI * 2)
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.15)'
     ctx.fill()
 
-    // 로봇 몸체 (둥근 사각형)
-    const bw = 12, bh = 14
+    // 몸체 하단 (어두운 면 — 3D 깊이감)
     ctx.beginPath()
-    ctx.roundRect(-bw / 2, -bh / 2, bw, bh, 3)
+    ctx.roundRect(-9, -4, 18, 16, 4)
+    ctx.fillStyle = '#1d4ed8'
+    ctx.fill()
+
+    // 몸체 상단 (밝은 면)
+    ctx.beginPath()
+    ctx.roundRect(-9, -8, 18, 14, 4)
     ctx.fillStyle = '#3b82f6'
     ctx.fill()
-    ctx.strokeStyle = '#93c5fd'
-    ctx.lineWidth = 1
-    ctx.stroke()
 
-    // 눈 (두 개의 작은 원)
-    ctx.fillStyle = '#fff'
+    // 몸체 하이라이트 (상단 반사광)
     ctx.beginPath()
-    ctx.arc(-2.5, -2, 1.8, 0, Math.PI * 2)
+    ctx.roundRect(-7, -7, 14, 5, 3)
+    ctx.fillStyle = 'rgba(147, 197, 253, 0.4)'
+    ctx.fill()
+
+    // 얼굴 패널 (어두운 스크린)
+    ctx.beginPath()
+    ctx.roundRect(-6, -4, 12, 7, 2)
+    ctx.fillStyle = '#1e293b'
+    ctx.fill()
+
+    // 눈 (LED 느낌 — 발광)
+    ctx.shadowColor = '#60a5fa'
+    ctx.shadowBlur = 4
+    ctx.fillStyle = '#93c5fd'
+    ctx.beginPath()
+    ctx.arc(-2.5, -1, 1.8, 0, Math.PI * 2)
     ctx.fill()
     ctx.beginPath()
-    ctx.arc(2.5, -2, 1.8, 0, Math.PI * 2)
+    ctx.arc(2.5, -1, 1.8, 0, Math.PI * 2)
     ctx.fill()
+    ctx.shadowBlur = 0
 
     // 안테나
     ctx.beginPath()
-    ctx.moveTo(0, -bh / 2)
-    ctx.lineTo(0, -bh / 2 - 4)
-    ctx.strokeStyle = '#93c5fd'
-    ctx.lineWidth = 1.2
+    ctx.moveTo(0, -8)
+    ctx.lineTo(0, -14)
+    ctx.strokeStyle = '#64748b'
+    ctx.lineWidth = 1.5
+    ctx.lineCap = 'round'
     ctx.stroke()
-    ctx.beginPath()
-    ctx.arc(0, -bh / 2 - 5, 1.5, 0, Math.PI * 2)
-    ctx.fillStyle = '#60a5fa'
-    ctx.fill()
 
-    // 입 (작은 미소)
+    // 안테나 끝 (발광 구)
+    ctx.shadowColor = '#22c55e'
+    ctx.shadowBlur = 6
     ctx.beginPath()
-    ctx.arc(0, 2, 2.5, 0.1 * Math.PI, 0.9 * Math.PI)
-    ctx.strokeStyle = '#fff'
-    ctx.lineWidth = 1
-    ctx.stroke()
+    ctx.arc(0, -15, 2, 0, Math.PI * 2)
+    ctx.fillStyle = '#22c55e'
+    ctx.fill()
+    ctx.shadowBlur = 0
+
+    // 바퀴 (양쪽)
+    ctx.fillStyle = '#334155'
+    ctx.beginPath()
+    ctx.roundRect(-11, 2, 3, 6, 1)
+    ctx.fill()
+    ctx.beginPath()
+    ctx.roundRect(8, 2, 3, 6, 1)
+    ctx.fill()
 
     ctx.restore()
   }, [])
@@ -180,25 +205,33 @@ export default function RosMap({ ros, status, robotPose, patrolRoute, onZoneChan
       const w = bottomRight.x - topLeft.x
       const h = bottomRight.y - topLeft.y
 
-      // 가벼운 반투명 배경
-      ctx.fillStyle = zone.color + '12'
+      // 반투명 배경 (잘 보이게)
+      ctx.fillStyle = zone.color + '20'
       ctx.fillRect(topLeft.x, topLeft.y, w, h)
 
-      // 테두리 (얇은 실선)
+      // 테두리 (실선, 두껍게)
       ctx.save()
-      ctx.strokeStyle = zone.color + '80'
-      ctx.lineWidth = 1.5
+      ctx.strokeStyle = zone.color + 'bb'
+      ctx.lineWidth = 2
       ctx.strokeRect(topLeft.x, topLeft.y, w, h)
       ctx.restore()
 
-      // Zone 라벨 (하단 좌측에 작게)
-      const lx = topLeft.x + 6
-      const ly = bottomRight.y - 6
-      ctx.font = 'bold 9px sans-serif'
-      ctx.textAlign = 'left'
-      ctx.textBaseline = 'bottom'
+      // Zone 라벨 (배경 포함, 잘 보이게)
+      const cx = topLeft.x + w / 2
+      const cy = topLeft.y + h / 2
+      const label = zone.name
+      ctx.font = 'bold 11px -apple-system, sans-serif'
+      ctx.textAlign = 'center'
+      ctx.textBaseline = 'middle'
+      const tw = ctx.measureText(label).width
+      // 라벨 배경
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.85)'
+      ctx.beginPath()
+      ctx.roundRect(cx - tw / 2 - 6, cy - 8, tw + 12, 16, 4)
+      ctx.fill()
+      // 라벨 텍스트
       ctx.fillStyle = zone.color
-      ctx.fillText(zone.name, lx, ly)
+      ctx.fillText(label, cx, cy)
     }
   }, [activeZones, worldToCanvas])
 
@@ -264,8 +297,8 @@ export default function RosMap({ ros, status, robotPose, patrolRoute, onZoneChan
     const ctx = canvasRef.current.getContext('2d')!
     ctx.putImageData(mapDataRef.current, 0, 0)
 
-    // 맵 배경만 연하게 — 반투명 어두운 오버레이 (이 위의 Zone/로봇/경로는 밝게 보임)
-    ctx.fillStyle = 'rgba(15, 17, 23, 0.45)'
+    // 맵 배경만 연하게 — 반투명 밝은 오버레이 (이 위의 Zone/로봇/경로는 선명하게 보임)
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.35)'
     ctx.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height)
 
     drawZoneOverlays(ctx, mapMeta)
