@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks, WebSocket, WebSocketDisconnect, Header
+from fastapi import FastAPI, HTTPException, BackgroundTasks, WebSocket, WebSocketDisconnect, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -26,7 +26,6 @@ from database import (
     list_detections,
 )
 from auth import create_token, verify_token
-from gemini_analyzer import analyze_image_bytes
 
 log = logging.getLogger(__name__)
 
@@ -159,35 +158,9 @@ def root():
     return {"message": "CCATFARM API가 정상 작동 중입니다!"}
 
 
-# ── 작물 분석 (Gemini Vision) ──
-crop_results: list[dict] = []  # 메모리 저장 (나중에 DB로 전환 가능)
-
-
-@app.post("/api/crops/analyze")
-async def analyze_crop(file: UploadFile = File(...), zone: str = "Unknown"):
-    """이미지 업로드 → Gemini로 분석 → 결과 반환"""
-    if not file.content_type or not file.content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="이미지 파일만 업로드 가능합니다.")
-
-    image_bytes = await file.read()
-    mime_type = file.content_type or "image/jpeg"
-
-    result = analyze_image_bytes(image_bytes, mime_type)
-    result["zone"] = zone
-    result["filename"] = file.filename
-    result["analyzed_at"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-
-    # 이미지를 base64로 포함
-    import base64
-    result["imageData"] = f"data:{mime_type};base64,{base64.b64encode(image_bytes).decode()}"
-
-    # 결과 저장
-    crop_results.insert(0, result)
-    # 최대 100개만 유지
-    if len(crop_results) > 100:
-        crop_results.pop()
-
-    return result
+# ── 작물 분석 데이터 ──
+# 분석 결과는 파이프라인(run-inference.py TensorRT) → DB(detections) 경로로만 생성된다.
+# 수동 업로드 + Gemini Vision 분석 경로는 스코프에서 제거되었다.
 
 
 def detection_to_crop(row: dict) -> dict:
