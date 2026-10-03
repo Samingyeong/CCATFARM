@@ -1,8 +1,9 @@
-import { useRef, useEffect, useState, useCallback } from 'react'
-import { Check, Crosshair, X, Grid3X3 } from 'lucide-react'
+import { useRef, useEffect, useState, useCallback, useMemo } from 'react'
+import { Check, Crosshair, X, Grid3X3, Info, Home as HomeIcon, Leaf, Flag } from 'lucide-react'
 import type { UseRosReturn } from '../hooks/useRos'
 import { TOPICS } from '../config/rosTopics'
 import { ZONES, generateZonesFromMap, getZoneFromPose, type ZoneBounds } from '../utils/zoneMap'
+import { loadSavedZones } from './ZoneEditor'
 import {
   buildInitialPoseMessage,
   canSetManualInitialPose,
@@ -29,10 +30,48 @@ interface RosMapProps {
   robotStatus?: string
   robotStatusSequence?: number
   onManualPosePendingChange?: (pending: boolean) => void
-  /** 순회 경로 (Zone name 배열, 예: ['Zone A', 'Zone B']) */
+  /** 지나온 경로 (Zone name 배열, 예: ['Zone A', 'Zone B']) */
   patrolRoute?: string[]
+  /** /mission_route_points에서 파싱된 미션 경로 JSON (전체 순찰 waypoint의 원천) */
+  missionRoute?: Record<string, unknown> | null
   /** 로봇이 Zone을 변경했을 때 콜백 */
   onZoneChange?: (zoneName: string) => void
+}
+
+interface Waypoint { x: number; y: number; name?: string }
+
+/**
+ * /mission_route_points JSON에서 waypoint 배열을 유연하게 추출한다.
+ * 로봇 포맷을 모르므로 흔한 형태들을 모두 수용한다:
+ *  - { points: [{x,y,name?}, ...] }
+ *  - { route: [[x,y], ...] } / { waypoints: [...] }
+ *  - [ {x,y}, ... ] 또는 [ [x,y], ... ]
+ * 추출 실패 시 빈 배열.
+ */
+function parseMissionWaypoints(route: Record<string, unknown> | null | undefined): Waypoint[] {
+  if (!route) return []
+  const candidate: any =
+    Array.isArray(route) ? route
+      : (route as any).points ?? (route as any).waypoints ?? (route as any).route ?? (route as any).path
+  if (!Array.isArray(candidate)) return []
+  const out: Waypoint[] = []
+  for (const item of candidate) {
+    if (Array.isArray(item) && item.length >= 2 && typeof item[0] === 'number' && typeof item[1] === 'number') {
+      out.push({ x: item[0], y: item[1] })
+    } else if (item && typeof item === 'object' && typeof item.x === 'number' && typeof item.y === 'number') {
+      out.push({ x: item.x, y: item.y, name: typeof item.name === 'string' ? item.name : undefined })
+    }
+  }
+  return out
+}
+
+/** 미션 JSON에서 home/dock 좌표 추출 (있으면) */
+function parseMissionHome(route: Record<string, unknown> | null | undefined): Waypoint | null {
+  if (!route || Array.isArray(route)) return null
+  const h: any = (route as any).home ?? (route as any).dock ?? (route as any).station
+  if (h && typeof h.x === 'number' && typeof h.y === 'number') return { x: h.x, y: h.y }
+  if (Array.isArray(h) && typeof h[0] === 'number' && typeof h[1] === 'number') return { x: h[0], y: h[1] }
+  return null
 }
 
 type InitialPoseStatus =
@@ -40,10 +79,19 @@ type InitialPoseStatus =
   | { state: 'pending'; statusSequenceAtSend: number }
   | { state: 'ready' }
 
-// 색상 팔레트 — 전술 관제 스타일 (맵은 어둡게)
-const COLOR_FREE = [8, 18, 36]           // 배경 (이동 가능)
-const COLOR_OCCUPIED = [0, 180, 200]     // 시안 계열 (벽/장애물)
-const COLOR_UNKNOWN = [6, 12, 24]        // 더 어두운 (미탐색)
+// OccupancyGrid 팔레트 — Smart Farm Navigation (raw b/w가 아닌 농업 테마)
+const COLOR_UNKNOWN = [247, 249, 246]    // #F7F9F6 미탐색
+const COLOR_FREE = [238, 243, 236]       // #EEF3EC 자유 공간
+const COLOR_OCCUPIED = [200, 210, 199]   // #C8D2C7 장애물
+const COLOR_STRONG = [174, 188, 175]     // #AEBCAF 강한 장애물(벽)
+
+// 시맨틱 레이어 색
+const GREEN = '#4F8F46'                   // primary green (로봇/활성)
+const GREEN_RGB = '79, 143, 70'
+const ROUTE_PAST = '#9DB29B'              // 지나온 경로 (muted gray-green)
+const ROUTE_FUTURE = 'rgba(79,143,70,0.45)' // 예정 경로 (medium-opacity green)
+const ZONE_BORDER = 'rgba(120, 140, 120, 0.5)' // muted gray-green 1px border
+
 const MAP_THROTTLE_MS = Number(import.meta.env.VITE_MAP_THROTTLE_MS ?? 1000)
 
 export default function RosMap({
@@ -55,6 +103,7 @@ export default function RosMap({
   robotStatusSequence = 0,
   onManualPosePendingChange,
   patrolRoute,
+  missionRoute,
   onZoneChange,
 }: RosMapProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -67,10 +116,40 @@ export default function RosMap({
   const [poseMode, setPoseMode] = useState(false)
   const [zoneEditMode, setZoneEditMode] = useState(false)
   const [zoneDraft, setZoneDraft] = useState<{ start: { x: number; y: number }; end: { x: number; y: number } } | null>(null)
+  // 드래그 완료 후 확인/수정 모달에 띄울 pending zone (바로 반영하지 않음)
+  const [pendingZone, setPendingZone] = useState<{ name: string; xMin: string; xMax: string; yMin: string; yMax: string } | null>(null)
   const [cursorCoord, setCursorCoord] = useState<{ x: number; y: number } | null>(null)
   const [poseDraft, setPoseDraft] = useState<PoseEstimate | null>(null)
   const [dragStart, setDragStart] = useState<{ x: number; y: number } | null>(null)
   const [initialPoseStatus, setInitialPoseStatus] = useState<InitialPoseStatus>({ state: 'idle' })
+
+  // 현재 로봇이 위치한 Zone (활성 Zone 하이라이트용) — 좌표 재계산 아님, 기존 판정 로직 사용
+  const activeZoneName = useMemo(() => {
+    if (!robotPose) return null
+    const z = getZoneFromPose(robotPose.x, robotPose.y, activeZones)
+    return z ? z.name : null
+  }, [robotPose, activeZones])
+
+  // 미션 waypoint (전체/예정 경로의 원천). 없으면 빈 배열 → 기존 zone 기반 경로로 폴백
+  const missionWaypoints = useMemo(() => parseMissionWaypoints(missionRoute), [missionRoute])
+  const missionHome = useMemo(() => parseMissionHome(missionRoute), [missionRoute])
+
+  // 하단 상태바용: 다음 waypoint(가장 가까운) 인덱스/거리, 미션 진행도
+  const navSummary = useMemo(() => {
+    if (missionWaypoints.length === 0 || !robotPose) return null
+    let targetIdx = 0, best = Infinity
+    for (let i = 0; i < missionWaypoints.length; i++) {
+      const d = Math.hypot(missionWaypoints[i].x - robotPose.x, missionWaypoints[i].y - robotPose.y)
+      if (d < best) { best = d; targetIdx = i }
+    }
+    return {
+      targetIdx,
+      distance: best,
+      total: missionWaypoints.length,
+      // 진행도: 현재 target 이전까지 완료한 것으로 간주
+      done: targetIdx,
+    }
+  }, [missionWaypoints, robotPose])
 
   const drawRobot = useCallback((ctx: CanvasRenderingContext2D, pose: { x: number; y: number; yaw?: number }, meta: MapMeta) => {
     const px = (pose.x - meta.origin.x) / meta.resolution
@@ -79,60 +158,43 @@ export default function RosMap({
     ctx.save()
     ctx.translate(px, py)
 
-    // /robot_pose의 quaternion에서 계산한 전방 방향
+    // 은은한 외부 헤일로 (로봇을 가장 눈에 띄게)
+    ctx.beginPath()
+    ctx.arc(0, 0, 14, 0, Math.PI * 2)
+    ctx.fillStyle = `rgba(${GREEN_RGB}, 0.12)`
+    ctx.fill()
+
+    // Heading arrow — quaternion→yaw 방향의 채워진 삼각형 (바라보는 방향)
     if (typeof pose.yaw === 'number') {
       ctx.save()
       ctx.rotate(-pose.yaw)
       ctx.beginPath()
-      ctx.moveTo(5, 0)
-      ctx.lineTo(23, 0)
-      ctx.lineTo(17, -5)
-      ctx.moveTo(23, 0)
-      ctx.lineTo(17, 5)
-      ctx.strokeStyle = '#ffffff'
-      ctx.lineWidth = 2
-      ctx.stroke()
+      ctx.moveTo(20, 0)      // 끝점(전방)
+      ctx.lineTo(10, -5.5)
+      ctx.lineTo(10, 5.5)
+      ctx.closePath()
+      ctx.fillStyle = GREEN
+      ctx.fill()
       ctx.restore()
     }
 
-    // 외부 펄스 링 (라임 글로우)
+    // 흰 테두리 링 (밝은 맵 대비)
     ctx.beginPath()
-    ctx.arc(0, 0, 16, 0, Math.PI * 2)
-    ctx.strokeStyle = 'rgba(0, 230, 118, 0.2)'
-    ctx.lineWidth = 1
-    ctx.stroke()
-
-    // 중간 링
-    ctx.beginPath()
-    ctx.arc(0, 0, 11, 0, Math.PI * 2)
-    ctx.strokeStyle = 'rgba(0, 230, 118, 0.4)'
-    ctx.lineWidth = 1.5
-    ctx.stroke()
-
-    // 코어 원 (라임 그린)
-    ctx.beginPath()
-    ctx.arc(0, 0, 6, 0, Math.PI * 2)
-    ctx.fillStyle = '#00e676'
-    ctx.shadowColor = '#00e676'
-    ctx.shadowBlur = 14
-    ctx.fill()
-    ctx.shadowBlur = 0
-
-    // 내부 밝은 점
-    ctx.beginPath()
-    ctx.arc(0, 0, 2.5, 0, Math.PI * 2)
+    ctx.arc(0, 0, 8, 0, Math.PI * 2)
     ctx.fillStyle = '#ffffff'
     ctx.fill()
 
-    // 십자선 (HUD 느낌)
-    ctx.strokeStyle = 'rgba(0, 230, 118, 0.5)'
-    ctx.lineWidth = 0.8
+    // 코어 원 (브랜드 그린)
     ctx.beginPath()
-    ctx.moveTo(-18, 0); ctx.lineTo(-8, 0)
-    ctx.moveTo(8, 0); ctx.lineTo(18, 0)
-    ctx.moveTo(0, -18); ctx.lineTo(0, -8)
-    ctx.moveTo(0, 8); ctx.lineTo(0, 18)
-    ctx.stroke()
+    ctx.arc(0, 0, 6.5, 0, Math.PI * 2)
+    ctx.fillStyle = GREEN
+    ctx.fill()
+
+    // 내부 밝은 점
+    ctx.beginPath()
+    ctx.arc(0, 0, 2.4, 0, Math.PI * 2)
+    ctx.fillStyle = '#ffffff'
+    ctx.fill()
 
     ctx.restore()
   }, [])
@@ -190,208 +252,164 @@ export default function RosMap({
     ctx.restore()
   }, [worldToCanvas])
 
-  const drawZoneOverlays = useCallback((ctx: CanvasRenderingContext2D, meta: MapMeta) => {
+  // Zone 레이어: 기본은 투명 + 1px muted border, 로봇이 있는 활성 Zone만 연한 green fill
+  const drawZoneOverlays = useCallback((ctx: CanvasRenderingContext2D, meta: MapMeta, activeName: string | null) => {
     for (const zone of activeZones) {
       const topLeft = worldToCanvas({ x: zone.xMin, y: zone.yMax }, meta)
       const bottomRight = worldToCanvas({ x: zone.xMax, y: zone.yMin }, meta)
       const w = bottomRight.x - topLeft.x
       const h = bottomRight.y - topLeft.y
+      const isActive = zone.name === activeName
 
-      // 반투명 폴리곤 내부
-      ctx.fillStyle = zone.color + '15'
-      ctx.fillRect(topLeft.x, topLeft.y, w, h)
+      // 활성 Zone만 연한 green highlight
+      if (isActive) {
+        ctx.fillStyle = `rgba(${GREEN_RGB}, 0.12)`
+        ctx.fillRect(topLeft.x, topLeft.y, w, h)
+      }
 
-      // 외곽선 (글로우 효과)
-      ctx.save()
-      ctx.shadowColor = zone.color
-      ctx.shadowBlur = 6
-      ctx.strokeStyle = zone.color + 'aa'
-      ctx.lineWidth = 1.5
+      // 1px border — 활성은 green, 나머지는 muted gray-green
+      ctx.strokeStyle = isActive ? `rgba(${GREEN_RGB}, 0.65)` : ZONE_BORDER
+      ctx.lineWidth = 1
       ctx.strokeRect(topLeft.x, topLeft.y, w, h)
-      ctx.shadowBlur = 0
-      ctx.restore()
 
-      // 코너 마커 (전술 느낌)
-      const cornerLen = 8
-      ctx.strokeStyle = zone.color
-      ctx.lineWidth = 2
-      ctx.lineCap = 'square'
-      // 좌상
-      ctx.beginPath()
-      ctx.moveTo(topLeft.x, topLeft.y + cornerLen); ctx.lineTo(topLeft.x, topLeft.y); ctx.lineTo(topLeft.x + cornerLen, topLeft.y)
-      ctx.stroke()
-      // 우상
-      ctx.beginPath()
-      ctx.moveTo(bottomRight.x - cornerLen, topLeft.y); ctx.lineTo(bottomRight.x, topLeft.y); ctx.lineTo(bottomRight.x, topLeft.y + cornerLen)
-      ctx.stroke()
-      // 좌하
-      ctx.beginPath()
-      ctx.moveTo(topLeft.x, bottomRight.y - cornerLen); ctx.lineTo(topLeft.x, bottomRight.y); ctx.lineTo(topLeft.x + cornerLen, bottomRight.y)
-      ctx.stroke()
-      // 우하
-      ctx.beginPath()
-      ctx.moveTo(bottomRight.x - cornerLen, bottomRight.y); ctx.lineTo(bottomRight.x, bottomRight.y); ctx.lineTo(bottomRight.x, bottomRight.y - cornerLen)
-      ctx.stroke()
-
-      // Zone 라벨 (미래형 HUD 스타일)
-      const cx = topLeft.x + w / 2
-      const cy = topLeft.y + h / 2
-      const label = zone.name.toUpperCase()
-      ctx.font = '600 12px -apple-system, sans-serif'
-      ctx.textAlign = 'center'
-      ctx.textBaseline = 'middle'
-      ctx.shadowColor = zone.color
-      ctx.shadowBlur = 8
-      ctx.fillStyle = zone.color
-      ctx.fillText(label, cx, cy)
-      ctx.shadowBlur = 0
+      // 좌상단 작은 라벨 (글자 작게, 활성만 진하게)
+      const label = zone.name
+      ctx.font = `600 7px -apple-system, sans-serif`
+      ctx.textAlign = 'left'
+      ctx.textBaseline = 'top'
+      ctx.fillStyle = isActive ? GREEN : 'rgba(120, 138, 120, 0.65)'
+      ctx.fillText(label, topLeft.x + 4, topLeft.y + 4)
     }
   }, [activeZones, worldToCanvas])
 
-  const drawPatrolRoute = useCallback((ctx: CanvasRenderingContext2D, meta: MapMeta, currentPose: { x: number; y: number } | null) => {
-    if (!patrolRoute || patrolRoute.length === 0) return
+  // 폴리라인 유틸
+  const strokePolyline = (ctx: CanvasRenderingContext2D, pts: { x: number; y: number }[]) => {
+    if (pts.length < 2) return
+    ctx.beginPath()
+    ctx.moveTo(pts[0].x, pts[0].y)
+    for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y)
+    ctx.stroke()
+  }
 
-    const getZoneCenter = (zoneName: string): { x: number; y: number } | null => {
-      const zone = activeZones.find((z) => z.name === zoneName)
-      if (!zone) return null
-      return { x: (zone.xMin + zone.xMax) / 2, y: (zone.yMin + zone.yMax) / 2 }
-    }
-
-    const points: { x: number; y: number }[] = []
-    if (currentPose) {
-      points.push(worldToCanvas(currentPose, meta))
-    }
-    for (const zoneName of patrolRoute) {
-      const center = getZoneCenter(zoneName)
-      if (center) points.push(worldToCanvas(center, meta))
-    }
-
-    if (points.length < 2) return
-
-    // 네온 경로 — 글로우 라인
+  // ① 지나온 경로 (muted gray-green) — 방문한 Zone 중심을 이은 선
+  const drawPastRoute = useCallback((ctx: CanvasRenderingContext2D, meta: MapMeta) => {
+    if (!patrolRoute || patrolRoute.length < 2) return
+    const pts = patrolRoute
+      .map((name) => activeZones.find((z) => z.name === name))
+      .filter((z): z is ZoneBounds => !!z)
+      .map((z) => worldToCanvas({ x: (z.xMin + z.xMax) / 2, y: (z.yMin + z.yMax) / 2 }, meta))
+    if (pts.length < 2) return
     ctx.save()
-    // 글로우 배경
-    ctx.strokeStyle = 'rgba(0, 229, 255, 0.2)'
-    ctx.lineWidth = 8
+    ctx.strokeStyle = ROUTE_PAST
+    ctx.lineWidth = 2.5
     ctx.lineCap = 'round'
     ctx.lineJoin = 'round'
-    ctx.beginPath()
-    ctx.moveTo(points[0].x, points[0].y)
-    for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y)
-    ctx.stroke()
+    strokePolyline(ctx, pts)
+    ctx.restore()
+  }, [patrolRoute, activeZones, worldToCanvas])
 
-    // 메인 라인
-    ctx.strokeStyle = '#00e5ff'
+  // ② 예정 경로 (medium-opacity green) + ③ 활성 가이던스 (robot→next, dashed primary)
+  //    + waypoint 마커 (target만 filled, 나머지 white+green outline)
+  const drawMissionRoute = useCallback((ctx: CanvasRenderingContext2D, meta: MapMeta, pose: { x: number; y: number } | null) => {
+    if (missionWaypoints.length === 0) return
+    const wpCanvas = missionWaypoints.map((w) => worldToCanvas(w, meta))
+
+    // 로봇에서 가장 가까운 waypoint를 "다음 target"으로 간주
+    let targetIdx = 0
+    if (pose) {
+      let best = Infinity
+      for (let i = 0; i < missionWaypoints.length; i++) {
+        const d = Math.hypot(missionWaypoints[i].x - pose.x, missionWaypoints[i].y - pose.y)
+        if (d < best) { best = d; targetIdx = i }
+      }
+    }
+
+    // 예정 경로 전체 (medium-opacity green)
+    ctx.save()
+    ctx.strokeStyle = ROUTE_FUTURE
     ctx.lineWidth = 2.5
-    ctx.shadowColor = '#00e5ff'
-    ctx.shadowBlur = 6
-    ctx.beginPath()
-    ctx.moveTo(points[0].x, points[0].y)
-    for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y)
-    ctx.stroke()
-    ctx.shadowBlur = 0
+    ctx.lineCap = 'round'
+    ctx.lineJoin = 'round'
+    strokePolyline(ctx, wpCanvas)
     ctx.restore()
 
-    // 방향 화살표
-    for (let i = 0; i < points.length - 1; i++) {
-      const from = points[i]
-      const to = points[i + 1]
-      const mx = (from.x + to.x) / 2
-      const my = (from.y + to.y) / 2
-      const angle = Math.atan2(to.y - from.y, to.x - from.x)
-
+    // 활성 가이던스: robot → next waypoint (dashed primary green)
+    if (pose && wpCanvas[targetIdx]) {
+      const p = worldToCanvas(pose, meta)
       ctx.save()
-      ctx.translate(mx, my)
-      ctx.rotate(angle)
+      ctx.strokeStyle = GREEN
+      ctx.lineWidth = 2.5
+      ctx.setLineDash([6, 5])
+      ctx.lineCap = 'round'
       ctx.beginPath()
-      ctx.moveTo(5, 0)
-      ctx.lineTo(-3, -3)
-      ctx.lineTo(-3, 3)
-      ctx.closePath()
-      ctx.fillStyle = '#00e5ff'
-      ctx.fill()
+      ctx.moveTo(p.x, p.y)
+      ctx.lineTo(wpCanvas[targetIdx].x, wpCanvas[targetIdx].y)
+      ctx.stroke()
       ctx.restore()
     }
 
-    // 출발점 (초록 네온)
-    ctx.beginPath()
-    ctx.arc(points[0].x, points[0].y, 6, 0, Math.PI * 2)
-    ctx.fillStyle = '#00e676'
-    ctx.shadowColor = '#00e676'
-    ctx.shadowBlur = 8
-    ctx.fill()
-    ctx.shadowBlur = 0
-    ctx.font = '700 7px -apple-system, sans-serif'
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillStyle = '#000'
-    ctx.fillText('S', points[0].x, points[0].y)
-
-    // 경유지 마커
-    for (let i = 1; i < points.length; i++) {
-      const isLast = i === points.length - 1
+    // waypoint 마커 — 작은 원 (지름 ~20px)
+    wpCanvas.forEach((p, i) => {
+      const isTarget = i === targetIdx
       ctx.beginPath()
-      ctx.arc(points[i].x, points[i].y, 6, 0, Math.PI * 2)
-      ctx.fillStyle = isLast ? '#ff3b30' : '#0066ff'
-      ctx.shadowColor = isLast ? '#ff3b30' : '#0066ff'
-      ctx.shadowBlur = 8
-      ctx.fill()
-      ctx.shadowBlur = 0
-      ctx.font = '700 7px -apple-system, sans-serif'
+      ctx.arc(p.x, p.y, 7, 0, Math.PI * 2)
+      if (isTarget) {
+        ctx.fillStyle = GREEN
+        ctx.fill()
+      } else {
+        ctx.fillStyle = '#ffffff'
+        ctx.fill()
+        ctx.strokeStyle = GREEN
+        ctx.lineWidth = 1.5
+        ctx.stroke()
+      }
+      ctx.font = '700 8px -apple-system, sans-serif'
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
-      ctx.fillStyle = '#fff'
-      ctx.fillText(isLast ? 'E' : String(i), points[i].x, points[i].y)
-    }
-
-  }, [activeZones, patrolRoute, worldToCanvas])
+      ctx.fillStyle = isTarget ? '#ffffff' : GREEN
+      ctx.fillText(String(i + 1), p.x, p.y + 0.5)
+    })
+  }, [missionWaypoints, worldToCanvas])
 
   const redrawMap = useCallback(() => {
     if (!mapMeta || !canvasRef.current || !mapDataRef.current) return
     const ctx = canvasRef.current.getContext('2d')!
     ctx.putImageData(mapDataRef.current, 0, 0)
 
-    // 맵 배경 — 투명도 낮춰서 존재감 최소화
-    ctx.fillStyle = 'rgba(8, 18, 36, 0.75)'
-    ctx.fillRect(0, 0, canvasRef.current.width, canvasRef.current.height)
+    // 레이어 순서 (아래→위):
+    // Base map(이미 putImageData) → Zone border → Active zone highlight(zone 함수 내) →
+    // Past route → Future route + Active guidance + Waypoint → Home/Dock → Robot
+    drawZoneOverlays(ctx, mapMeta, activeZoneName)
+    drawPastRoute(ctx, mapMeta)
+    drawMissionRoute(ctx, mapMeta, robotPose ?? null)
 
-    // Grid 오버레이 (시안 계열 — 레이더 느낌)
-    const gridSize = 20
-    ctx.strokeStyle = 'rgba(0, 229, 255, 0.06)'
-    ctx.lineWidth = 0.5
-    for (let x = 0; x < canvasRef.current.width; x += gridSize) {
-      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, canvasRef.current.height); ctx.stroke()
-    }
-    for (let y = 0; y < canvasRef.current.height; y += gridSize) {
-      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(canvasRef.current.width, y); ctx.stroke()
-    }
-
-    drawZoneOverlays(ctx, mapMeta)
-    drawPatrolRoute(ctx, mapMeta, robotPose ?? null)
-
-    // Home Zone 마커 (최초 연결 위치)
-    if (stationPos) {
-      const hp = worldToCanvas(stationPos, mapMeta)
+    // Home/Dock 마커 — 로봇 마커와 동일 계열(링+코어)이되 hollow로 구분
+    const homePos = missionHome ?? stationPos
+    if (homePos) {
+      const hp = worldToCanvas(homePos, mapMeta)
       ctx.save()
+      // 흰 테두리 링 (로봇 마커와 동일한 대비 처리)
       ctx.beginPath()
-      ctx.arc(hp.x, hp.y, 10, 0, Math.PI * 2)
-      ctx.fillStyle = 'rgba(34, 197, 94, 0.15)'
+      ctx.arc(hp.x, hp.y, 7, 0, Math.PI * 2)
+      ctx.fillStyle = '#ffffff'
       ctx.fill()
+      // 그린 링 (hollow — 로봇은 filled, home은 outline으로 구분)
       ctx.beginPath()
-      ctx.arc(hp.x, hp.y, 6, 0, Math.PI * 2)
-      ctx.strokeStyle = '#22c55e'
-      ctx.lineWidth = 1.5
-      ctx.setLineDash([3, 2])
+      ctx.arc(hp.x, hp.y, 5.5, 0, Math.PI * 2)
+      ctx.strokeStyle = GREEN
+      ctx.lineWidth = 2
       ctx.stroke()
-      ctx.setLineDash([])
+      // 중앙 작은 그린 점
       ctx.beginPath()
-      ctx.arc(hp.x, hp.y, 2.5, 0, Math.PI * 2)
-      ctx.fillStyle = '#22c55e'
+      ctx.arc(hp.x, hp.y, 2, 0, Math.PI * 2)
+      ctx.fillStyle = GREEN
       ctx.fill()
-      ctx.font = 'bold 8px sans-serif'
+      // 작은 라벨
+      ctx.font = '600 7px -apple-system, sans-serif'
       ctx.textAlign = 'center'
-      ctx.fillStyle = '#22c55e'
-      ctx.fillText('HOME', hp.x, hp.y - 13)
+      ctx.textBaseline = 'top'
+      ctx.fillStyle = GREEN
+      ctx.fillText('HOME', hp.x, hp.y + 9)
       ctx.restore()
     }
 
@@ -429,7 +447,7 @@ export default function RosMap({
       ctx.textAlign = 'right'
       ctx.fillText(`(${xMax}, ${yMin})`, br.x - 3, br.y - 3)
     }
-  }, [drawPoseEstimate, drawRobot, drawZoneOverlays, drawPatrolRoute, mapMeta, poseDraft, robotPose, stationPos, zoneDraft, worldToCanvas])
+  }, [drawPoseEstimate, drawRobot, drawZoneOverlays, drawPastRoute, drawMissionRoute, activeZoneName, missionHome, mapMeta, poseDraft, robotPose, stationPos, zoneDraft, worldToCanvas])
 
   useEffect(() => {
     if (!ros || status !== 'connected') {
@@ -473,15 +491,21 @@ export default function RosMap({
         let r: number, g: number, b: number
 
         if (val === -1) {
-          [r, g, b] = COLOR_UNKNOWN
+          [r, g, b] = COLOR_UNKNOWN           // 미탐색
         } else if (val === 0) {
-          [r, g, b] = COLOR_FREE
-        } else {
-          // 장애물: 값이 클수록 진하게
-          const t = val / 100
+          [r, g, b] = COLOR_FREE              // 자유 공간
+        } else if (val < 65) {
+          // 약한 장애물: free→occupied 보간
+          const t = val / 65
           r = Math.round(COLOR_FREE[0] + (COLOR_OCCUPIED[0] - COLOR_FREE[0]) * t)
           g = Math.round(COLOR_FREE[1] + (COLOR_OCCUPIED[1] - COLOR_FREE[1]) * t)
           b = Math.round(COLOR_FREE[2] + (COLOR_OCCUPIED[2] - COLOR_FREE[2]) * t)
+        } else {
+          // 강한 장애물(벽): occupied→strong 보간
+          const t = (val - 65) / 35
+          r = Math.round(COLOR_OCCUPIED[0] + (COLOR_STRONG[0] - COLOR_OCCUPIED[0]) * t)
+          g = Math.round(COLOR_OCCUPIED[1] + (COLOR_STRONG[1] - COLOR_OCCUPIED[1]) * t)
+          b = Math.round(COLOR_OCCUPIED[2] + (COLOR_STRONG[2] - COLOR_OCCUPIED[2]) * t)
         }
 
         imgData.data[idx] = r
@@ -502,10 +526,13 @@ export default function RosMap({
     redrawMap()
   }, [redrawMap])
 
-  // 맵 메타 수신 시 Zone 자동 생성 (수동 설정이 없을 때)
+  // 맵 메타 수신 시 Zone 결정: 저장된 사용자 Zone > 코드 ZONES > 자동 생성
   useEffect(() => {
     if (!mapMeta) return
-    if (ZONES.length > 0) {
+    const saved = loadSavedZones()
+    if (saved.length > 0) {
+      setActiveZones(saved)
+    } else if (ZONES.length > 0) {
       setActiveZones(ZONES)
     } else {
       const generated = generateZonesFromMap(
@@ -625,7 +652,7 @@ export default function RosMap({
   }
 
   const handlePointerUp = (event: React.PointerEvent<HTMLCanvasElement>) => {
-    // Zone 편집 완료
+    // Zone 편집 완료 → 바로 반영하지 않고 확인/수정 모달을 띄운다
     if (zoneEditMode && zoneDraft) {
       event.currentTarget.releasePointerCapture(event.pointerId)
       const xMin = Math.min(zoneDraft.start.x, zoneDraft.end.x)
@@ -634,9 +661,14 @@ export default function RosMap({
       const yMax = Math.max(zoneDraft.start.y, zoneDraft.end.y)
       // 너무 작은 영역은 무시
       if (Math.abs(xMax - xMin) > 0.1 && Math.abs(yMax - yMin) > 0.1) {
-        console.log(`[Zone 설정] xMin: ${xMin.toFixed(2)}, xMax: ${xMax.toFixed(2)}, yMin: ${yMin.toFixed(2)}, yMax: ${yMax.toFixed(2)}`)
-        console.log(`→ zoneMap.ts에 추가:`)
-        console.log(`  { name: 'Zone ?', xMin: ${xMin.toFixed(1)}, xMax: ${xMax.toFixed(1)}, yMin: ${yMin.toFixed(1)}, yMax: ${yMax.toFixed(1)}, color: '#22c55e' },`)
+        const nextLetter = String.fromCharCode(65 + activeZones.length) // A, B, C...
+        setPendingZone({
+          name: `Zone ${nextLetter}`,
+          xMin: xMin.toFixed(2),
+          xMax: xMax.toFixed(2),
+          yMin: yMin.toFixed(2),
+          yMax: yMax.toFixed(2),
+        })
       }
       setZoneDraft(null)
       return
@@ -674,12 +706,38 @@ export default function RosMap({
     setDragStart(null)
   }
 
+  // 모달에서 확인 → activeZones에 추가 + localStorage 저장
+  const confirmPendingZone = () => {
+    if (!pendingZone) return
+    const xMin = parseFloat(pendingZone.xMin)
+    const xMax = parseFloat(pendingZone.xMax)
+    const yMin = parseFloat(pendingZone.yMin)
+    const yMax = parseFloat(pendingZone.yMax)
+    const name = pendingZone.name.trim()
+    if (!name || [xMin, xMax, yMin, yMax].some((v) => Number.isNaN(v))) return
+
+    const palette = ['#43C04A', '#6FD173', '#E7A23B', '#5B8DEF', '#8BD98F', '#C7A33B']
+    const newZone: ZoneBounds = {
+      name,
+      xMin: Math.min(xMin, xMax),
+      xMax: Math.max(xMin, xMax),
+      yMin: Math.min(yMin, yMax),
+      yMax: Math.max(yMin, yMax),
+      color: palette[activeZones.length % palette.length],
+    }
+    const updated = [...activeZones, newZone]
+    setActiveZones(updated)
+    try { localStorage.setItem('ccatfarm_zones', JSON.stringify(updated)) } catch {}
+    setPendingZone(null)
+  }
+
   return (
+    <div className="ros-map-wrap">
     <div className="ros-map-container">
       {!hasMap && (
         <div className="ros-map-placeholder">
-          <div className="ros-map-icon">MAP</div>
-          <p>ROS 맵 대기 중</p>
+          <div className="ros-map-icon"><Grid3X3 size={28} /></div>
+          <p>맵 대기 중</p>
           <p className="ros-map-hint">
             {status === 'connected'
               ? '/map 토픽을 구독하고 있습니다'
@@ -739,6 +797,13 @@ export default function RosMap({
               </button>
             </>
           )}
+          {!poseMode && !zoneEditMode && stationPos && (
+            <span className="ros-map-tool home" style={{ marginLeft: 'auto', cursor: 'default' }} title="Home / Dock 위치">
+              <HomeIcon size={15} />
+              <span>Home</span>
+              <span className="tool-sub">{stationPos.x.toFixed(1)}, {stationPos.y.toFixed(1)}</span>
+            </span>
+          )}
         </div>
       )}
       <canvas
@@ -756,11 +821,14 @@ export default function RosMap({
         </div>
       )}
       {hasMap && poseGuardMessage && !poseMode && (
-        <div className="ros-map-pose-guard">{poseGuardMessage}</div>
+        <div className="ros-map-pose-guard">
+          <Info size={12} />
+          <span>{poseGuardMessage}</span>
+        </div>
       )}
       {hasMap && zoneEditMode && (
         <div className="ros-map-pose-hint zone-edit-hint">
-          드래그로 Zone 영역을 지정하세요 (좌표는 콘솔에 출력됩니다)
+          드래그로 Zone 영역을 지정하면 확인 창이 열립니다
           {cursorCoord && (
             <span className="cursor-coord">
               커서: X={cursorCoord.x.toFixed(2)}, Y={cursorCoord.y.toFixed(2)}
@@ -776,12 +844,7 @@ export default function RosMap({
       )}
       {hasMap && robotPose && (
         <div className="ros-map-coords">
-          X: {robotPose.x.toFixed(2)} | Y: {robotPose.y.toFixed(2)}
-        </div>
-      )}
-      {hasMap && stationPos && !zoneEditMode && (
-        <div className="home-zone-badge">
-          HOME: ({stationPos.x.toFixed(1)}, {stationPos.y.toFixed(1)})
+          X {robotPose.x.toFixed(2)} · Y {robotPose.y.toFixed(2)}
         </div>
       )}
       {hasMap && mapMeta && zoneEditMode && (
@@ -791,6 +854,85 @@ export default function RosMap({
           | 해상도: {mapMeta.resolution}m/px
         </div>
       )}
+    </div>
+
+    {/* 하단 내비게이션 상태 바 — Current Zone / Next Waypoint / Mission Progress */}
+    {hasMap && (
+      <div className="nav-status-bar">
+        <div className="nav-stat">
+          <div className="nav-stat-icon zone"><Leaf size={15} /></div>
+          <div className="nav-stat-body">
+            <span className="nav-stat-label">Current Zone</span>
+            <span className="nav-stat-value">{activeZoneName ?? '—'}</span>
+          </div>
+        </div>
+        <div className="nav-stat-divider" />
+        <div className="nav-stat">
+          <div className="nav-stat-icon wp">
+            {navSummary ? navSummary.targetIdx + 1 : <Flag size={14} />}
+          </div>
+          <div className="nav-stat-body">
+            <span className="nav-stat-label">Next Waypoint</span>
+            <span className="nav-stat-value">
+              {navSummary ? `${navSummary.distance.toFixed(1)} m` : '—'}
+            </span>
+          </div>
+        </div>
+        <div className="nav-stat-divider" />
+        <div className="nav-stat progress">
+          <span className="nav-stat-label">Mission Progress</span>
+          <div className="nav-progress-track">
+            <div
+              className="nav-progress-fill"
+              style={{ width: navSummary && navSummary.total > 0 ? `${(navSummary.done / navSummary.total) * 100}%` : '0%' }}
+            />
+          </div>
+          <span className="nav-progress-text">
+            {navSummary ? `${navSummary.done} / ${navSummary.total}` : '0 / 0'}
+          </span>
+        </div>
+      </div>
+    )}
+
+    {/* Zone 설정 확인/수정 모달 — 드래그 좌표를 수동으로 다듬어 확정 */}
+    {pendingZone && (
+      <div className="zone-modal-backdrop" onClick={() => setPendingZone(null)}>
+        <div className="zone-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="zone-modal-head">
+            <span>Zone 설정 확인</span>
+            <button className="zone-modal-close" onClick={() => setPendingZone(null)}><X size={16} /></button>
+          </div>
+          <p className="zone-modal-desc">드래그한 영역의 좌표입니다. 필요하면 직접 수정한 뒤 저장하세요.</p>
+
+          <label className="zone-modal-field">
+            <span>이름</span>
+            <input
+              value={pendingZone.name}
+              onChange={(e) => setPendingZone({ ...pendingZone, name: e.target.value })}
+              placeholder="Zone A"
+            />
+          </label>
+
+          <div className="zone-modal-grid">
+            {(['xMin', 'xMax', 'yMin', 'yMax'] as const).map((k) => (
+              <label key={k} className="zone-modal-field">
+                <span>{k}</span>
+                <input
+                  type="number" step="0.1" inputMode="decimal"
+                  value={pendingZone[k]}
+                  onChange={(e) => setPendingZone({ ...pendingZone, [k]: e.target.value })}
+                />
+              </label>
+            ))}
+          </div>
+
+          <div className="zone-modal-actions">
+            <button className="btn btn-secondary" onClick={() => setPendingZone(null)}>취소</button>
+            <button className="btn btn-primary" onClick={confirmPendingZone}>저장</button>
+          </div>
+        </div>
+      </div>
+    )}
     </div>
   )
 }

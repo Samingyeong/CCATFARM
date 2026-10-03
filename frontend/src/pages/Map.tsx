@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Bell, Wifi, WifiOff, Loader, ShieldAlert } from 'lucide-react'
+import { Loader, ShieldAlert } from 'lucide-react'
+import AppHeader from '../components/ui/AppHeader'
+import { connectionTone } from '../components/ui/StatusBadge'
 import { useRos } from '../hooks/useRos'
 import { useBattery } from '../hooks/useBattery'
 import { useRobotCommand, type RobotCommand } from '../hooks/useRobotCommand'
@@ -305,40 +307,49 @@ export default function Map() {
     && !manualInterlockActive
   const startCommandEnabled = missionCommandEnabled && !manualPosePending
 
-  const statusIcon = {
-    connecting: <Loader size={14} className="spin" />,
-    connected: <Wifi size={14} color="#22c55e" />,
-    disconnected: <WifiOff size={14} color="#9ca3af" />,
-    error: <WifiOff size={14} color="#ef4444" />,
-  }[status]
-
   const statusLabel = {
     connecting: '연결 중...',
     connected: '연결됨',
     disconnected: '연결 끊김',
     error: '연결 오류',
   }[status]
+  const conn = connectionTone(status)
 
   return (
     <div className="page">
-      <header className="page-header">
-        <h1 className="page-title">MAP</h1>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-          <div className="ros-status-badge">{statusIcon}<span>{statusLabel}</span></div>
-          <Bell size={20} className="header-icon" />
-        </div>
-      </header>
+      <AppHeader
+        title="Robot Map"
+        showBell={false}
+        right={
+          <div className="map-header-status">
+            <span className={`map-conn ${conn.tone}`}>
+              <span className="badge-dot" />
+              {statusLabel}
+            </span>
+            <span className="map-header-chip">🔋 {battery ? `${battery.percentage}%` : '--'}</span>
+            <span className="map-header-chip mono">{new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
+          </div>
+        }
+      />
 
       <div className="page-content">
         <div className="camera-feed">
           <CameraStream ros={ros} status={status} />
           <div className="camera-overlay">
-            <span className="camera-tag red">
-              {pose ? `● X:${pose.x.toFixed(1)} Y:${pose.y.toFixed(1)}` : '● 위치 대기'}
-            </span>
-            <div className="camera-stats">
-              <span>🔋 {battery ? `${battery.percentage}%` : '--'}</span>
-              <span>{new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })}</span>
+            <div className="camera-overlay-top">
+              <span className="overlay-chip">
+                <span className="badge-dot" style={{ background: conn.tone === 'success' ? 'var(--success)' : conn.tone === 'danger' ? 'var(--danger)' : 'var(--warning)' }} />
+                {conn.label}
+              </span>
+              <span className="overlay-chip mono">
+                {new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+              </span>
+            </div>
+            <div className="camera-overlay-bottom">
+              <span className="overlay-chip mono">
+                {pose ? `X ${pose.x.toFixed(1)} · Y ${pose.y.toFixed(1)}` : '위치 대기'}
+              </span>
+              <span className="overlay-chip">🔋 {battery ? `${battery.percentage}%` : '--'}</span>
             </div>
           </div>
         </div>
@@ -352,6 +363,7 @@ export default function Map() {
           robotStatusSequence={driveManager.robotStatusSequence}
           onManualPosePendingChange={setManualPosePending}
           patrolRoute={visitedRoute}
+          missionRoute={driveManager.missionRoute}
           onZoneChange={handleZoneChange}
         />
 
@@ -381,9 +393,9 @@ export default function Map() {
 
         <div className="mode-row">
           <div className="mode-box">
-            <span className="mode-label">MODE</span>
+            <span className="mode-label">Mode Control</span>
             <div className="mode-toggle">
-              <button className={mode === 'AUTO' ? 'active' : ''} onClick={selectAutoMode}>AUTO Patrol</button>
+              <button className={mode === 'AUTO' ? 'active' : ''} onClick={selectAutoMode}>AUTO PATROL</button>
               <button
                 className={`${mode === 'MANUAL' ? 'active' : ''} ${serverTeleop.forceArmed ? 'force' : ''}`}
                 onPointerDown={handleManualPointerDown}
@@ -395,10 +407,12 @@ export default function Map() {
                 {serverTeleop.forceArmed
                   ? '⚠ FORCE ARMED'
                   : serverTeleop.transitioningForce
-                    ? 'FORCE 전환 중'
+                    ? <><Loader size={11} className="spin" /> FORCE...</>
                     : serverTeleop.transitioningSafe
-                      ? 'SAFE 전환 중'
-                      : 'Manual Ctrl'}
+                      ? <><Loader size={11} className="spin" /> SAFE...</>
+                      : forceHoldProgress > 0
+                        ? 'HOLD 3 SEC'
+                        : 'MANUAL CTRL'}
                 {forceHoldProgress > 0 && (
                   <span className="force-hold-progress" style={{ width: `${forceHoldProgress}%` }} />
                 )}

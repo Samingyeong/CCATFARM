@@ -117,20 +117,20 @@ export default function ZoneEditor({ canvasWidth, canvasHeight, mapBounds, exist
   return (
     <div style={{ position: 'relative' }}>
       {/* 헤더 */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 12px', background: '#1a2332', borderRadius: '8px 8px 0 0' }}>
-        <span style={{ fontSize: 13, fontWeight: 600, color: '#60a5fa' }}>Zone 설정 모드</span>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 14px', background: '#FFFFFF', borderRadius: '16px 16px 0 0', border: '1px solid #E5EDE4', borderBottom: 'none' }}>
+        <span style={{ fontSize: 13, fontWeight: 700, color: '#43C04A' }}>Zone 설정 모드</span>
         <div style={{ display: 'flex', gap: 6 }}>
-          <button onClick={handleSave} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 4, background: '#22c55e', color: '#fff', border: 'none', fontSize: 11, cursor: 'pointer' }}>
+          <button onClick={handleSave} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 12px', borderRadius: 12, background: '#43C04A', color: '#fff', border: 'none', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
             <Save size={12} /> 저장
           </button>
-          <button onClick={onClose} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 4, background: '#6b7280', color: '#fff', border: 'none', fontSize: 11, cursor: 'pointer' }}>
+          <button onClick={onClose} style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '6px 12px', borderRadius: 12, background: '#F3F7F2', color: '#6B756B', border: 'none', fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
             <X size={12} /> 닫기
           </button>
         </div>
       </div>
 
       {/* 안내 */}
-      <p style={{ fontSize: 11, color: '#9ca3af', padding: '6px 12px', margin: 0, background: '#0f1724' }}>
+      <p style={{ fontSize: 11, color: '#6B756B', padding: '8px 14px', margin: 0, background: '#F2F8F1', borderLeft: '1px solid #E5EDE4', borderRight: '1px solid #E5EDE4' }}>
         지도 위에서 드래그하여 Zone 영역을 지정하세요.
       </p>
 
