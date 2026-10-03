@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:mock": "VITE_MOCK_ROS=1 vite --port 5174 --strictPort",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "test": "vitest run",

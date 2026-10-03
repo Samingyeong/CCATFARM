@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useCallback } from 'react'
+import { createMockRos, MOCK_ROS_ENABLED } from './mockRos'
 
 // CDN으로 로드된 ROSLIB은 window.ROSLIB으로 접근
 // npm 패키지 import 대신 전역 객체 사용
@@ -22,6 +23,17 @@ export function useRos(): UseRosReturn {
   const [status, setStatus] = useState<RosStatus>('disconnected')
 
   const connect = useCallback(() => {
+    // ── Mock 모드 (디자인 확인 전용, VITE_MOCK_ROS=1 일 때만) ──
+    if (MOCK_ROS_ENABLED) {
+      console.log('[ROS] MOCK MODE — simulated robot data (no real rosbridge)')
+      if (rosRef.current) rosRef.current.close()
+      const mock = createMockRos()
+      rosRef.current = mock
+      mock.on('connection', () => setStatus('connected'))
+      setStatus('connecting')
+      return
+    }
+
     if (!ROS_URL) {
       console.error('[ROS] VITE_ROS_URL is not configured')
       setStatus('error')
