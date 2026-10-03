@@ -1,10 +1,10 @@
 import { useState } from 'react'
-import { ArrowLeft, ZoomIn, ChevronDown, ChevronUp, AlertTriangle, CheckCircle } from 'lucide-react'
+import { ArrowLeft, Maximize2, AlertTriangle, CheckCircle2 } from 'lucide-react'
 
 interface Condition {
   type: string
   confidence: number
-  severity: string
+  severity?: string
   description: string
   bbox?: { x: number; y: number; w: number; h: number }
 }
@@ -24,8 +24,6 @@ interface CropResult {
   captureId?: string
   capturedAt?: string
   pose?: { x: number; y: number; yaw: number; source?: string } | null
-  imageUrl?: string
-  imageData?: string
 }
 
 interface CropDetailProps {
@@ -36,197 +34,115 @@ interface CropDetailProps {
 const API_BASE = import.meta.env.VITE_API_URL ?? ''
 
 const CONDITION_LABELS: Record<string, string> = {
-  chlorosis: '황화 현상',
-  insect_hole: '해충 피해(구멍)',
-  normal: '정상',
+  chlorosis: 'Chlorosis (황화)',
+  insect_hole: 'Insect Damage (해충)',
+  leaf: 'Leaf (정상 잎)',
+  normal: 'Normal',
 }
 
-const SEVERITY_LABELS: Record<string, { text: string; color: string; bg: string }> = {
-  high: { text: '높은 위험', color: '#fff', bg: '#dc2626' },
-  medium: { text: '주의', color: '#000', bg: '#f59e0b' },
-  low: { text: '경미', color: '#000', bg: '#86efac' },
+const SEVERITY_LABELS: Record<string, { text: string; cls: string }> = {
+  high: { text: 'High Risk', cls: 'high' },
+  medium: { text: 'Caution', cls: 'medium' },
+  low: { text: 'Mild', cls: 'low' },
 }
 
-const BBOX_COLORS: Record<string, string> = {
-  chlorosis: '#facc15',
-  insect_hole: '#ef4444',
-  normal: '#22c55e',
+const isAbnormalClass = (type: string) => type === 'insect_hole' || type === 'chlorosis'
+
+/**
+ * severity 결정: 백엔드가 severity를 주면 그대로, 없으면 신뢰도로 산출.
+ * 정상(leaf/normal)은 severity 배지를 띄우지 않으므로 null 반환.
+ * 이상 클래스는 confidence 0.8↑ High, 0.5~0.8 Caution, 그 미만 Mild.
+ */
+function resolveSeverity(type: string, confidence: number, given?: string) {
+  if (!isAbnormalClass(type)) return null
+  const key = given && SEVERITY_LABELS[given]
+    ? given
+    : confidence >= 0.8 ? 'high' : confidence >= 0.5 ? 'medium' : 'low'
+  return SEVERITY_LABELS[key]
 }
 
 export default function CropDetail({ crop, onBack }: CropDetailProps) {
-  const [showRecommendation, setShowRecommendation] = useState(false)
   const [imageZoom, setImageZoom] = useState(false)
 
   const isAbnormal = crop.status === 'Abnormal'
-  // 파이프라인 어노테이션 이미지는 이미 bbox가 그려져 있음 → 오버레이 생략
-  const isAnnotated = !!crop.annotationUrl
-  const imgSrc = crop.annotationUrl ? `${API_BASE}${crop.annotationUrl}` : (crop.imageUrl || crop.imageData)
+  const imgSrc = crop.annotationUrl ? `${API_BASE}${crop.annotationUrl}` : undefined
 
   return (
-    <div className="page" style={{ background: '#0f1724' }}>
-      {/* 헤더 */}
-      <header style={{ display: 'flex', alignItems: 'center', padding: '16px', gap: 12 }}>
-        <button onClick={onBack} style={{ background: 'none', border: 'none', color: '#fff', cursor: 'pointer' }}>
-          <ArrowLeft size={20} />
-        </button>
-        <h1 style={{ fontSize: 16, fontWeight: 600, color: '#fff', margin: 0 }}>이상 감지 결과</h1>
-      </header>
-
-      {/* 상단 요약 카드 */}
-      <div style={{ margin: '0 16px 16px', padding: 16, background: '#1a2332', borderRadius: 12, border: '1px solid #2a3a4a' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            {isAbnormal ? <AlertTriangle size={18} color="#ef4444" /> : <CheckCircle size={18} color="#22c55e" />}
-            <span style={{ fontSize: 15, fontWeight: 600, color: '#fff' }}>
-              {crop.zone} {isAbnormal ? '이상 감지' : '정상'}
-            </span>
-          </div>
-          {crop.analyzed_at && (
-            <span style={{ fontSize: 11, color: '#9ca3af' }}>{crop.analyzed_at}</span>
-          )}
-        </div>
-        <p style={{ fontSize: 12, color: '#9ca3af', margin: '6px 0 0' }}>
-          {crop.overall}
-        </p>
+    <div className="page">
+      <div className="detail-header">
+        <button className="detail-back" onClick={onBack}><ArrowLeft size={18} /></button>
+        <h1>진단 상세</h1>
       </div>
 
-      {/* 분석 이미지 + bbox 오버레이 */}
-      <div style={{ margin: '0 16px 16px', padding: 16, background: '#1a2332', borderRadius: 12, border: '1px solid #2a3a4a' }}>
-        <p style={{ fontSize: 13, fontWeight: 600, color: '#60a5fa', margin: '0 0 12px' }}>분석 이미지</p>
-        <div style={{ position: 'relative' }}>
+      {/* 요약 */}
+      <div className="detail-section">
+        <div className="card">
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              {isAbnormal ? <AlertTriangle size={18} color="var(--danger)" /> : <CheckCircle2 size={18} color="var(--success)" />}
+              <span style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>
+                {crop.zone} · {isAbnormal ? '이상 감지' : '정상'}
+              </span>
+            </div>
+            {crop.camera && <span className="pill">{crop.camera === 'left' ? 'LEFT CAM' : crop.camera === 'right' ? 'RIGHT CAM' : crop.camera}</span>}
+          </div>
+          {crop.overall && <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 8, lineHeight: 1.5 }}>{crop.overall}</p>}
+        </div>
+      </div>
+
+      {/* 어노테이션 이미지 */}
+      <div className="detail-section">
+        <p className="detail-section-title">Annotation</p>
+        <div className="detail-image-wrap">
           {imgSrc ? (
             <>
-              <img
-                src={imgSrc}
-                alt="분석 이미지"
-                onClick={() => setImageZoom(true)}
-                style={{ width: '100%', borderRadius: 8, cursor: 'pointer', display: 'block' }}
-              />
-              {/* bbox 오버레이 (파이프라인 이미지는 이미 그려져 있으므로 생략) */}
-              {!isAnnotated && crop.conditions?.map((cond, i) => {
-                if (!cond.bbox || cond.type === 'normal') return null
-                const color = BBOX_COLORS[cond.type] || '#fff'
-                return (
-                  <div key={i} style={{
-                    position: 'absolute',
-                    left: `${cond.bbox.x * 100}%`,
-                    top: `${cond.bbox.y * 100}%`,
-                    width: `${cond.bbox.w * 100}%`,
-                    height: `${cond.bbox.h * 100}%`,
-                    border: `3px solid ${color}`,
-                    borderRadius: 4,
-                    pointerEvents: 'none',
-                    boxShadow: `0 0 6px ${color}40`,
-                  }}>
-                    <span style={{
-                      position: 'absolute', top: -22, left: 0,
-                      background: color, color: '#000',
-                      fontSize: 10, padding: '1px 6px', borderRadius: 3, whiteSpace: 'nowrap', fontWeight: 600
-                    }}>
-                      {CONDITION_LABELS[cond.type] || cond.type}
-                    </span>
-                  </div>
-                )
-              })}
+              <img src={imgSrc} alt="분석 이미지" onClick={() => setImageZoom(true)} style={{ cursor: 'pointer' }} />
+              <button className="detail-expand" onClick={() => setImageZoom(true)}><Maximize2 size={13} /> Expand</button>
             </>
-          ) : (
-            <div style={{ width: '100%', height: 200, background: '#2a3a4a', borderRadius: 8, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#6b7280' }}>
-              이미지 없음
-            </div>
-          )}
-          <button
-            onClick={() => setImageZoom(true)}
-            style={{ position: 'absolute', bottom: 8, right: 8, background: 'rgba(0,0,0,0.6)', border: 'none', borderRadius: 6, padding: '4px 8px', color: '#fff', fontSize: 11, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}
-          >
-            <ZoomIn size={12} /> 확대
-          </button>
+          ) : <div className="detail-image-empty">이미지 없음</div>}
         </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: 8, flexWrap: 'wrap', gap: 4 }}>
-          <span style={{ fontSize: 11, color: '#6b7280' }}>
-            촬영 시간: {crop.capturedAt || crop.analyzed_at || '-'}
-          </span>
-          <span style={{ fontSize: 11, color: '#6b7280' }}>
-            구역: {crop.zone}{crop.camera ? ` · ${crop.camera}` : ''}
-          </span>
+        <div className="detail-meta-row">
+          <span>촬영: {crop.capturedAt || crop.analyzed_at || '-'}</span>
+          <span>구역: {crop.zone}</span>
+          {crop.runId && <span>run: {crop.runId}</span>}
+          {crop.pose && <span>pose: ({crop.pose.x.toFixed(2)}, {crop.pose.y.toFixed(2)})</span>}
         </div>
-        {(crop.runId || crop.pose) && (
-          <div style={{ fontSize: 11, color: '#6b7280', marginTop: 4 }}>
-            {crop.runId && <span>run: {crop.runId}</span>}
-            {crop.captureId && <span> · capture: {crop.captureId}</span>}
-            {crop.pose && <span> · pose: ({crop.pose.x.toFixed(2)}, {crop.pose.y.toFixed(2)})</span>}
-          </div>
-        )}
       </div>
 
-      {/* 분석 결과 요약 */}
-      <div style={{ margin: '0 16px 16px', padding: 16, background: '#1a2332', borderRadius: 12, border: '1px solid #2a3a4a' }}>
-        <p style={{ fontSize: 13, fontWeight: 600, color: '#60a5fa', margin: '0 0 12px' }}>분석 결과 요약</p>
-
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-          {isAbnormal ? <AlertTriangle size={16} color="#ef4444" /> : <CheckCircle size={16} color="#22c55e" />}
-          <span style={{ fontSize: 14, fontWeight: 600, color: '#fff' }}>
-            {isAbnormal ? '비정상 작물 감지' : '정상 작물'}
-          </span>
-        </div>
-
-        {isAbnormal && (
-          <p style={{ fontSize: 12, color: '#9ca3af', margin: '0 0 12px' }}>이상 영역이 발견되었습니다.</p>
-        )}
-
-        {/* 증상 카드들 */}
+      {/* AI 분석 */}
+      <div className="detail-section">
+        <p className="detail-section-title">AI Analysis</p>
         {crop.conditions?.map((cond, i) => {
-          const severity = SEVERITY_LABELS[cond.severity] || SEVERITY_LABELS.low
-          const borderColor = cond.type === 'normal' ? '#22c55e' : cond.type === 'chlorosis' ? '#facc15' : '#ef4444'
+          const sev = resolveSeverity(cond.type, cond.confidence ?? 0, cond.severity)
+          const conf = typeof cond.confidence === 'number' ? Math.round(cond.confidence * 100) : null
           return (
-            <div key={i} style={{ padding: 12, background: '#0f1724', borderRadius: 8, marginBottom: 8, borderLeft: `3px solid ${borderColor}` }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                <span style={{ fontSize: 13, fontWeight: 600, color: '#fff' }}>
-                  {CONDITION_LABELS[cond.type] || cond.type}
-                </span>
-                <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: severity.bg, color: severity.color, fontWeight: 600 }}>
-                  {severity.text}
-                </span>
+            <div key={i} className={`diagnosis-card ${cond.type}`}>
+              <div className="diagnosis-top">
+                <span className="diagnosis-name">{CONDITION_LABELS[cond.type] || cond.type}</span>
+                {sev && <span className={`severity-badge ${sev.cls}`}>{sev.text}</span>}
               </div>
-              <p style={{ fontSize: 12, color: '#9ca3af', margin: '4px 0 0' }}>
-                신뢰도 {typeof cond.confidence === 'number' ? cond.confidence.toFixed(2) : cond.confidence}
-              </p>
-              <p style={{ fontSize: 12, color: '#d1d5db', margin: '4px 0 0' }}>{cond.description}</p>
+              {cond.description && <p className="diagnosis-desc">{cond.description}</p>}
+              {conf !== null && (
+                <div className="conf-row">
+                  <div className="conf-bar"><div className="conf-fill" style={{ width: `${conf}%` }} /></div>
+                  <span className="conf-text">{conf}% Confidence</span>
+                </div>
+              )}
             </div>
           )
         })}
 
-        {/* 종합 소견 */}
-        <div style={{ marginTop: 12, padding: 10, background: '#0f1724', borderRadius: 8 }}>
-          <p style={{ fontSize: 12, color: '#9ca3af', margin: 0 }}>종합 소견</p>
-          <p style={{ fontSize: 13, color: '#e5e7eb', margin: '4px 0 0' }}>{crop.overall}</p>
-        </div>
+        {crop.overall && (
+          <div className="detail-overall">
+            <div className="detail-overall-label">종합 소견</div>
+            <div className="detail-overall-text">{crop.overall}</div>
+          </div>
+        )}
       </div>
 
-      {/* 조치 권장사항 */}
-      {crop.recommendation && (
-        <div style={{ margin: '0 16px 16px', background: '#1a2332', borderRadius: 12, border: '1px solid #2a3a4a', overflow: 'hidden' }}>
-          <button
-            onClick={() => setShowRecommendation(!showRecommendation)}
-            style={{ width: '100%', padding: 16, background: 'none', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between', cursor: 'pointer' }}
-          >
-            <span style={{ fontSize: 13, fontWeight: 600, color: '#60a5fa' }}>조치 권장사항</span>
-            {showRecommendation ? <ChevronUp size={16} color="#9ca3af" /> : <ChevronDown size={16} color="#9ca3af" />}
-          </button>
-          {showRecommendation && (
-            <div style={{ padding: '0 16px 16px' }}>
-              <p style={{ fontSize: 13, color: '#d1d5db', margin: 0, lineHeight: 1.6 }}>{crop.recommendation}</p>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* 이미지 확대 모달 */}
       {imageZoom && imgSrc && (
-        <div
-          onClick={() => setImageZoom(false)}
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.9)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}
-        >
-          <img src={imgSrc} style={{ maxWidth: '95vw', maxHeight: '90vh', borderRadius: 8 }} />
+        <div className="image-modal" onClick={() => setImageZoom(false)}>
+          <img src={imgSrc} />
         </div>
       )}
     </div>
