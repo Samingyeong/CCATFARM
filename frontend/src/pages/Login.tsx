@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { Leaf } from 'lucide-react'
 import { login, register } from '../utils/auth'
 
 interface LoginProps {
@@ -36,8 +37,9 @@ export default function Login({ onLogin }: LoginProps) {
     <div className="login-page">
       <div className="login-card">
         <div className="login-header">
+          <div className="login-logo"><Leaf size={28} /></div>
           <h1 className="login-title">CCATFARM</h1>
-          <p className="login-subtitle">Robot Monitoring System</p>
+          <p className="login-subtitle">Smart Farm Patrol Robot</p>
         </div>
 
         <form className="login-form" onSubmit={handleSubmit}>

@@ -10,7 +10,7 @@ import Settings from './pages/Settings'
 import './App.css'
 
 const navItems = [
-  { to: '/', label: 'Main', icon: HomeIcon },
+  { to: '/', label: 'Home', icon: HomeIcon },
   { to: '/map', label: 'Map', icon: MapIcon },
   { to: '/crops', label: 'Crops', icon: Leaf },
   { to: '/settings', label: 'Settings', icon: SettingsIcon },

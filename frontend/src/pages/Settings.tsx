@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { Bell, User, Trash2, Clock, LogOut } from 'lucide-react'
+import { User, Trash2, Clock, LogOut } from 'lucide-react'
 import { getPatrolHistory, clearPatrolHistory, type PatrolSession } from '../utils/patrolStorage'
 import { getUser } from '../utils/auth'
+import AppHeader from '../components/ui/AppHeader'
 
 interface SettingsProps {
   onLogout: () => void
@@ -36,24 +37,19 @@ export default function Settings({ onLogout }: SettingsProps) {
 
   return (
     <div className="page">
-      <header className="page-header">
-        <h1 className="page-title">Settings</h1>
-        <Bell size={20} className="header-icon" />
-      </header>
+      <AppHeader title="Settings" subtitle="계정 및 순회 이력" />
 
       <div className="page-content">
         {/* Avatar & User Info */}
         <div className="settings-avatar">
           <div className="avatar-circle">
-            <User size={48} color="#6b7280" />
+            <User size={44} color="var(--text-muted)" />
           </div>
         </div>
         {user && (
-          <p style={{ textAlign: 'center', fontSize: 13, color: 'var(--text-primary)', fontWeight: 600, marginBottom: 4 }}>
-            {user.name || user.username}
-          </p>
+          <p className="settings-user-name">{user.name || user.username}</p>
         )}
-        <div style={{ textAlign: 'center', marginBottom: 12 }}>
+        <div className="settings-logout-wrap">
           <button className="logout-btn" onClick={onLogout}>
             <LogOut size={13} /> 로그아웃
           </button>
