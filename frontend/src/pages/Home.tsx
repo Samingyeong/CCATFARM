@@ -1,5 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Bell, ChevronRight, BatteryCharging, Battery } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import {
+  MapPin, BatteryCharging, Battery, Play, Home as HomeIcon, OctagonAlert,
+  WifiOff, AlertTriangle, Hand, Activity, CalendarClock, ChevronRight, CheckCircle2,
+} from 'lucide-react'
 import { useRos } from '../hooks/useRos'
 import { useBattery } from '../hooks/useBattery'
 import { useDiagnostics } from '../hooks/useDiagnostics'
@@ -7,6 +11,11 @@ import { useRobotCommand } from '../hooks/useRobotCommand'
 import { useDriveManagerStatus } from '../hooks/useDriveManagerStatus'
 import { TOPICS } from '../config/rosTopics'
 import { getZoneName, ZONES } from '../utils/zoneMap'
+import AppHeader from '../components/ui/AppHeader'
+import DashboardCard from '../components/ui/DashboardCard'
+import StatusBadge, { connectionTone } from '../components/ui/StatusBadge'
+import CropHealthDonut from '../components/ui/CropHealthDonut'
+import AlertItem, { type AlertLevel } from '../components/ui/AlertItem'
 
 declare const ROSLIB: typeof import('roslib')
 
@@ -27,19 +36,25 @@ interface RobotState {
   isRunning: boolean
 }
 
+interface AlertEntry {
+  level: AlertLevel
+  icon: React.ReactNode
+  title: string
+  desc?: string
+  time?: string
+}
+
+const ZONE_COLORS = ['#43C04A', '#6FD173', '#E7A23B', '#5B8DEF', '#8BD98F', '#C7A33B']
+
 export default function Home() {
+  const navigate = useNavigate()
   const { ros, status } = useRos()
   const battery = useBattery(ros, status)
   const diagnostics = useDiagnostics(ros, status, 5)
   const driveManager = useDriveManagerStatus(ros, status)
   const publishRobotCommand = useRobotCommand(ros, status, driveManager.teleopActive)
   const [commandError, setCommandError] = useState<string | null>(null)
-  const [robot, setRobot] = useState<RobotState>({
-    zone: '---',
-    x: 0,
-    y: 0,
-    isRunning: false,
-  })
+  const [robot, setRobot] = useState<RobotState>({ zone: '---', x: 0, y: 0, isRunning: false })
   const [zoneSummary, setZoneSummary] = useState<ZoneSummary[]>([])
 
   // zone별 집계 (총/정상/이상) 로드 — /api/zones/summary
@@ -55,25 +70,18 @@ export default function Home() {
       }
     }
     load()
-    const t = setInterval(load, 10000) // 10초마다 갱신
+    const t = setInterval(load, 10000)
     return () => { cancelled = true; clearInterval(t) }
   }, [])
 
-  // 전체 합계
   const totals = zoneSummary.reduce(
-    (acc, z) => {
-      acc.total += z.total
-      acc.normal += z.normal
-      acc.abnormal += z.abnormal
-      return acc
-    },
+    (acc, z) => { acc.total += z.total; acc.normal += z.normal; acc.abnormal += z.abnormal; return acc },
     { total: 0, normal: 0, abnormal: 0 }
   )
 
   // drive_manager의 통합 /robot_pose 구독 → Zone 판별
   useEffect(() => {
     if (!ros || status !== 'connected') return
-
     const poseTopic = new ROSLIB.Topic({
       ros,
       name: TOPICS.ROBOT_POSE.name,
@@ -81,7 +89,6 @@ export default function Home() {
       throttle_rate: 100,
       queue_length: 1,
     } as any)
-
     poseTopic.subscribe((message: any) => {
       const pos = message.pose?.pose?.position
       if (pos) {
@@ -89,13 +96,13 @@ export default function Home() {
         setRobot({ x: pos.x, y: pos.y, zone, isRunning: true })
       }
     })
-
     return () => poseTopic.unsubscribe()
   }, [ros, status])
 
   const connected = status === 'connected'
   const missionCommandEnabled = connected && driveManager.teleopActive === false
-  const batteryLow = battery && battery.percentage <= 20
+  const batteryLow = !!battery && battery.percentage <= 20
+  const conn = connectionTone(status)
 
   const sendMissionCommand = (command: 'START' | 'HOME') => {
     setCommandError(null)
@@ -104,181 +111,161 @@ export default function Home() {
     }
   }
 
+  // ── 알림 수집 (아이콘 + 제목 + 설명 + 시간 구조) ──
+  const alerts: AlertEntry[] = []
+  if (!connected) alerts.push({ level: 'critical', icon: <WifiOff size={18} />, title: 'Connection Lost', desc: '로봇 연결이 끊겼습니다 — rosbridge 확인 필요', time: 'now' })
+  if (commandError) alerts.push({ level: 'warning', icon: <AlertTriangle size={18} />, title: 'Command Blocked', desc: commandError })
+  if (driveManager.teleopActive) alerts.push({ level: 'warning', icon: <Hand size={18} />, title: 'Manual Control Active', desc: 'START/HOME이 잠겨 있습니다' })
+  if (driveManager.teleopStatus?.startsWith('ERROR')) alerts.push({ level: 'critical', icon: <AlertTriangle size={18} />, title: 'Teleop Error', desc: driveManager.teleopStatus })
+  if (batteryLow) alerts.push({ level: 'critical', icon: <Battery size={18} />, title: 'Low Battery', desc: `배터리 ${battery!.percentage}% — 충전이 필요합니다` })
+  diagnostics.forEach((d) => alerts.push({
+    level: d.level >= 2 ? 'critical' : 'warning',
+    icon: <Activity size={18} />,
+    title: d.name,
+    desc: d.message,
+  }))
+  if (connected) alerts.push({ level: 'info', icon: <Activity size={18} />, title: 'System Telemetry', desc: `위치: ${driveManager.robotPoseSource} · TELEOP: ${driveManager.teleopStatus}` })
+
+  const visibleAlerts = alerts.slice(0, 3)
+
+  // zone 목록: 집계가 있으면 집계, 없으면 기본 zone 안내
+  const zoneRows = zoneSummary.length > 0
+    ? zoneSummary.map((z, i) => ({ name: z.zone, normal: z.normal, abnormal: z.abnormal, color: ZONE_COLORS[i % ZONE_COLORS.length], hasData: true }))
+    : (ZONES.length > 0 ? ZONES : [{ name: 'Zone A', color: '#43C04A' } as any, { name: 'Zone B', color: '#6FD173' } as any])
+        .map((z: any) => ({ name: z.name, normal: 0, abnormal: 0, color: z.color, hasData: false }))
+
   return (
     <div className="page">
-      <header className="page-header">
-        <h1 className="page-title">CCATFARM ROBOT</h1>
-        <Bell size={20} className="header-icon" />
-      </header>
+      <AppHeader
+        title="Smart Farm"
+        subtitle="Today's Overview"
+        right={<StatusBadge tone={conn.tone} label={conn.label} />}
+      />
 
       <div className="page-content">
-        {/* Robot Control Card */}
-        <div className="card">
-          <p className="card-label">CCATFARM ROBOT</p>
-          <div className="robot-controls">
-            <button className="ctrl-btn zone" style={{ fontWeight: 700 }}>
-              {robot.zone}
-            </button>
-            <button className={`ctrl-btn ${connected && robot.isRunning ? 'running' : ''}`}>
-              {connected ? driveManager.robotStatus : 'OFFLINE'}
-            </button>
-            <button className={`ctrl-btn off ${batteryLow ? 'battery-low' : ''}`}>
-              {battery ? (
-                <>
-                  {battery.isCharging ? <BatteryCharging size={14} /> : <Battery size={14} />}
-                  {' '}{battery.percentage}%
-                </>
-              ) : (
-                'OFF'
-              )}
-              <br /><span>{battery ? `${battery.voltage.toFixed(1)}V` : 'Battery Power'}</span>
-            </button>
+        {/* 01. Robot Control */}
+        <DashboardCard label="Robot Control">
+          <div className="robot-card-top">
+            <span className="robot-zone-pill"><MapPin size={14} />{robot.zone}</span>
+            <StatusBadge
+              tone={connected ? (robot.isRunning ? 'success' : 'primary') : 'neutral'}
+              label={connected ? driveManager.robotStatus : 'OFFLINE'}
+            />
           </div>
-          <div className="progress-bar-wrap">
+
+          <div className="battery-block">
+            <span className={`battery-pct ${batteryLow ? 'low' : ''}`}>
+              {battery ? `${battery.percentage}%` : '--'}
+            </span>
+            <div className="battery-meta">
+              <span className="battery-volt">{battery ? `${battery.voltage.toFixed(1)} V` : 'Battery Power'}</span>
+              <span className={`battery-state ${battery?.isCharging ? 'charging' : batteryLow ? 'low' : ''}`}>
+                {battery?.isCharging
+                  ? <><BatteryCharging size={12} style={{ verticalAlign: -2 }} /> Charging</>
+                  : batteryLow ? 'Low Battery' : 'Normal'}
+              </span>
+            </div>
+          </div>
+
+          <div className="battery-track">
             <div
-              className="progress-bar"
+              className="battery-fill"
               style={{
                 width: battery ? `${battery.percentage}%` : '0%',
-                background: batteryLow ? '#ef4444' : battery?.isCharging ? '#22c55e' : '#3b5bdb',
+                background: batteryLow ? 'var(--danger)' : battery?.isCharging ? 'var(--success)' : 'var(--primary)',
               }}
             />
           </div>
+
           <div className="robot-actions">
-            <button
-              className="action-btn start"
-              onClick={() => sendMissionCommand('START')}
-              disabled={!missionCommandEnabled}
-            >
-              START
+            <button className="btn btn-primary" onClick={() => sendMissionCommand('START')} disabled={!missionCommandEnabled}>
+              <Play size={15} /> START
+            </button>
+            <button className="btn btn-secondary" onClick={() => sendMissionCommand('HOME')} disabled={!missionCommandEnabled}>
+              <HomeIcon size={15} /> HOME
             </button>
             <button
-              className="action-btn home"
-              onClick={() => sendMissionCommand('HOME')}
-              disabled={!missionCommandEnabled}
-            >
-              HOME
-            </button>
-            <button
-              className="action-btn emergency"
+              className="btn btn-danger-outline"
               onClick={() => publishRobotCommand('ESTOP')}
               disabled={!connected}
+              aria-label="EMERGENCY"
+              title="EMERGENCY STOP"
             >
-              EMERGENCY
+              <OctagonAlert size={18} />
             </button>
           </div>
-        </div>
+        </DashboardCard>
 
-        {/* Alerts Card */}
-        <div className="card">
-          <p className="card-label">ALERTS</p>
-          <div className="alert-list">
-            {!connected && (
-              <div className="alert-item red">
-                ⚠ 로봇 연결 끊김 — rosbridge 확인 필요
+        {/* 02. Alerts */}
+        <DashboardCard
+          label="Alerts"
+          action={alerts.length > 0 ? <button className="card-link">View all <ChevronRight size={13} /></button> : undefined}
+        >
+          {visibleAlerts.length > 0 ? (
+            <div className="alert-list">
+              {visibleAlerts.map((a, i) => (
+                <AlertItem key={i} level={a.level} icon={a.icon} title={a.title} desc={a.desc} time={a.time} />
+              ))}
+            </div>
+          ) : (
+            <div className="alert-empty">
+              <div className="alert-empty-icon"><CheckCircle2 size={24} /></div>
+              <div className="alert-empty-title">Everything looks good</div>
+              <div className="alert-empty-desc">No active alerts</div>
+            </div>
+          )}
+        </DashboardCard>
+
+        {/* 03. Overall Crop Health */}
+        <DashboardCard
+          label="Overall Crop Health"
+          action={
+            <button className="card-link" onClick={() => navigate('/crops')} aria-label="작물 전체 보기">
+              <ChevronRight size={18} color="var(--text-muted)" />
+            </button>
+          }
+        >
+          <div className="crop-health">
+            <CropHealthDonut normal={totals.normal} abnormal={totals.abnormal} />
+            <div className="health-summary">
+              <div className="health-stat">
+                <span className="legend-dot green" />
+                <span className="health-stat-num">{totals.normal}</span>
+                <span className="health-stat-label">Healthy</span>
               </div>
-            )}
-            {commandError && <div className="alert-item warn">⚠ {commandError}</div>}
-            {driveManager.teleopActive && (
-              <div className="alert-item warn">⚠ 수동 조종 중 — START/HOME 잠금</div>
-            )}
-            {driveManager.teleopStatus.startsWith('ERROR') && (
-              <div className="alert-item red">❌ {driveManager.teleopStatus}</div>
-            )}
-            {connected && (
-              <div className="alert-item status-info">
-                위치: {driveManager.robotPoseSource} · TELEOP: {driveManager.teleopStatus}
+              <div className="health-stat">
+                <span className="legend-dot red" />
+                <span className="health-stat-num">{totals.abnormal}</span>
+                <span className="health-stat-label">Abnormal</span>
               </div>
-            )}
-            {batteryLow && (
-              <div className="alert-item red">
-                🔋 배터리 부족 ({battery!.percentage}%) — 충전 필요
-              </div>
-            )}
-            {diagnostics.map((d, i) => (
-              <div key={i} className={`alert-item ${d.level >= 2 ? 'red' : 'warn'}`}>
-                {d.level >= 2 ? '❌' : '⚠'} [{d.name}] {d.message}
+            </div>
+          </div>
+
+          <div className="zone-list">
+            {zoneRows.map((z, i) => (
+              <div key={i} className="zone-row" onClick={() => navigate('/crops', { state: { zone: z.name } })}>
+                <span className="zone-dot" style={{ background: z.abnormal > 0 ? 'var(--danger)' : z.color }} />
+                <span className={`zone-name ${robot.zone === z.name ? 'active-robot' : ''}`}>
+                  {z.name}{robot.zone === z.name && ' · 로봇 위치'}
+                </span>
+                <span className="zone-counts">
+                  {z.hasData
+                    ? <><span className="n-normal">{z.normal} Healthy</span> · <span className="n-abnormal">{z.abnormal} Abnormal</span></>
+                    : <span style={{ color: 'var(--text-muted)' }}>데이터 없음</span>}
+                </span>
+                <ChevronRight size={14} color="var(--text-muted)" />
               </div>
             ))}
-            {connected && !batteryLow && diagnostics.length === 0 && (
-              <div style={{ padding: '8px', fontSize: 12, color: '#22c55e' }}>
-                ✓ 시스템 정상
-              </div>
-            )}
           </div>
-        </div>
+        </DashboardCard>
 
-        {/* Overall Crop Health Card */}
-        <div className="card">
-          <div className="card-header-row">
-            <p className="card-label">OVERALL CROP HEALTH</p>
-            <ChevronRight size={16} />
+        {/* 04. Scheduling Info — 스케줄 API 미연동, 빈 상태 표시 */}
+        <DashboardCard label="Scheduling Info">
+          <div className="schedule-empty">
+            <div className="schedule-empty-icon"><CalendarClock size={24} /></div>
+            <p>예정된 순찰이 없습니다</p>
           </div>
-          <div className="crop-health">
-            <div className="donut-wrap">
-              {(() => {
-                const R = 30
-                const C = 2 * Math.PI * R
-                const normalRatio = totals.total > 0 ? totals.normal / totals.total : 0
-                return (
-                  <svg viewBox="0 0 80 80" width="80" height="80">
-                    {/* 이상(빨강) 배경 트랙 */}
-                    <circle cx="40" cy="40" r={R} fill="none" stroke="#ef4444" strokeWidth="10" />
-                    {/* 정상(초록) 비율만큼 덮기 */}
-                    {totals.total > 0 && (
-                      <circle
-                        cx="40" cy="40" r={R} fill="none" stroke="#22c55e" strokeWidth="10"
-                        strokeDasharray={`${C * normalRatio} ${C}`}
-                        transform="rotate(-90 40 40)"
-                        strokeLinecap="round"
-                      />
-                    )}
-                  </svg>
-                )
-              })()}
-              <div className="donut-label">
-                <span className="donut-num">{totals.total > 0 ? totals.total : '--'}</span><br />CROPS
-              </div>
-            </div>
-            <div className="zone-list">
-              {zoneSummary.length > 0 ? (
-                zoneSummary.map((z, i) => (
-                  <div key={i} className="zone-row">
-                    <span className="zone-dot" style={{ background: z.abnormal > 0 ? '#ef4444' : '#22c55e' }} />
-                    <span className="zone-name" style={{
-                      fontWeight: robot.zone === z.zone ? 700 : 400,
-                      color: robot.zone === z.zone ? '#3b82f6' : undefined,
-                    }}>
-                      {z.zone} · 정상 {z.normal} / 이상 {z.abnormal}
-                      {robot.zone === z.zone && ' ← 로봇'}
-                    </span>
-                    <ChevronRight size={12} />
-                  </div>
-                ))
-              ) : (
-                (ZONES.length > 0 ? ZONES : [
-                  { name: 'Zone A', color: '#22c55e' },
-                  { name: 'Zone B', color: '#3b82f6' },
-                ]).map((z, i) => (
-                  <div key={i} className="zone-row">
-                    <span className="zone-dot" style={{ background: z.color }} />
-                    <span className="zone-name">{z.name}</span>
-                    <ChevronRight size={12} />
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-          <div className="legend">
-            <span className="legend-dot green" /> NORMAL {totals.normal}
-            <span className="legend-dot red" style={{ marginLeft: 12 }} /> ABNORMAL {totals.abnormal}
-          </div>
-        </div>
-
-        {/* Scheduling Info */}
-        <div className="card">
-          <p className="card-label">SCHEDULING INFO.</p>
-          <div className="schedule-box" />
-        </div>
+        </DashboardCard>
       </div>
     </div>
   )
